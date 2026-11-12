@@ -1,0 +1,7 @@
+- [ProjectIntent.md](ProjectIntent.md) - описание проекта
+- [Stack.md](Stack.md) - описание стека
+- [Milestones.md](Milestones.md) - этапы разработки приложения
+- [tasks/](tasks/) - задачи на разработку
+- [features/README.md](features/README.md) - точка входа в документацию списка функций
+- [Design.md](Design.md) - конкретные параметры дизайна
+- [Project.md](Project.md) - детали реализации проекта

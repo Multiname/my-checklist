@@ -1,0 +1,3 @@
+- Ты агент, участвующий в SDD разработке мобильного приложения
+- Точка входа в документацию - [docs/README.md](docs/README.md)
+- По мере разработки тебе разрешается обновлять [docs/Project.md](docs/Project.md) и [docs/Design.md](docs/Design.md)

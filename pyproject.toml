@@ -1,0 +1,30 @@
+[project]
+name = "my-checklist"
+version = "0.1.0"
+description = "Мобильное приложение для ведения чеклиста"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "flet==1.1.2",
+]
+
+[dependency-groups]
+dev = [
+    "flet-cli==1.1.2",
+    "flet-desktop==1.1.2",
+    "pytest==9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+# Кэш pytest отключён: в ограниченном режиме песочницы DSH его временные
+# каталоги (0700) становятся недоступны процессу. См. docs/Project.md.
+addopts = "-p no:cacheprovider"
+
+[tool.flet]
+org = "com.example"
+product = "My Checklist"
+
+[tool.flet.app]
+path = "src"
