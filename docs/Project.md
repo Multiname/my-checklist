@@ -32,6 +32,10 @@ $env:USERPROFILE = "$PWD\.flet\home"
 Первый такой запуск скачивает клиент Flet (~100 МБ) в `.flet/home`; каталог
 `.flet/` в git не попадает. Проверено: окно приложения открывается.
 
+## Репозиторий
+- GitHub: <https://github.com/Multiname/my-checklist>, ветка `main`
+- Первый коммит: `7fb36cf` «Первый коммит: каркас проекта Flet»
+
 ## Окружение разработки
 
 ### Python
@@ -78,3 +82,10 @@ $env:USERPROFILE = "$PWD\.flet\home"
 (`addopts = "-p no:cacheprovider"`): иначе каждый запуск создаёт в корне
 недоступные каталоги `pytest-cache-files-*`. Тесты без `tmp_path` идут
 в обычном режиме.
+
+### Git в песочнице DSH
+- Штатный TLS-бэкенд git (schannel) в песочнице падает с
+  `SEC_E_NO_CREDENTIALS`, поэтому в локальном конфиге репозитория выставлен
+  `http.sslBackend=openssl` (в git не коммитится).
+- `git push` требует полного доступа: git-credential-manager не работает,
+  пока песочница запрещает pipes.
