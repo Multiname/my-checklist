@@ -27,7 +27,13 @@ def test_button_area_has_category_buttons():
     for button in buttons:
         assert button.width == main.BUTTON_SIZE
         assert button.height == main.BUTTON_SIZE
-        assert button.shape == ft.BoxShape.CIRCLE
+        assert button.border_radius == main.BUTTON_SIZE / 2
+
+
+def test_buttons_are_clickable_with_ink_ripple():
+    for button in main.create_button_area().content.controls:
+        assert button.ink is True
+        assert callable(button.on_click)
 
 
 def test_button_icons_exist_in_assets():

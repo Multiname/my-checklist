@@ -15,12 +15,18 @@ ICON_PENCIL = "icons/pencil.webp"
 ICON_TRASH = "icons/trash-bin.webp"
 
 
-def icon_button(icon_src: str, tooltip: str, on_click=None) -> ft.Container:
+def _no_op(event: ft.ControlEvent):
+    """Заглушка обработчика: тап по кнопке даёт ripple, но ничего не делает."""
+
+
+def icon_button(icon_src: str, tooltip: str, on_click) -> ft.Container:
     """Круглая кнопка с иконкой для button_area."""
     return ft.Container(
         width=BUTTON_SIZE,
         height=BUTTON_SIZE,
-        shape=ft.BoxShape.CIRCLE,
+        # Радиус 28 (= половина стороны) вместо shape=CIRCLE: Flet передаёт
+        # в InkWell только border_radius, и splash тапа обрезается по кругу.
+        border_radius=BUTTON_SIZE / 2,
         bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
         shadow=ft.BoxShadow(
             blur_radius=6,
@@ -49,9 +55,9 @@ def create_button_area() -> ft.Container:
             spacing=BUTTON_SPACING,
             tight=True,
             controls=[
-                icon_button(ICON_PLUS, "Создать категорию"),
-                icon_button(ICON_PENCIL, "Переименовать категорию"),
-                icon_button(ICON_TRASH, "Удалить категорию"),
+                icon_button(ICON_PLUS, "Создать категорию", _no_op),
+                icon_button(ICON_PENCIL, "Переименовать категорию", _no_op),
+                icon_button(ICON_TRASH, "Удалить категорию", _no_op),
             ],
         ),
     )

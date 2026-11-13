@@ -22,8 +22,9 @@
 `button_area` реализована в `src/main.py`: `icon_button()` — круглая кнопка
 с иконкой, `create_button_area()` — контейнер из трёх кнопок
 (`create_category`, `rename_category`, `delete_category`), закреплённый
-свойствами `right`/`bottom` в `ft.Stack`. Параметры внешнего вида — в
-[Design.md](Design.md).
+свойствами `right`/`bottom` в `ft.Stack`. Кнопки уже кликабельны: при тапе
+срабатывает обработчик-заглушка `_no_op` и появляется ripple Material.
+Параметры внешнего вида — в [Design.md](Design.md).
 
 Ассеты — `src/assets`; `flet run` и `flet build` ищут каталог `assets`
 относительно `main.py`, поэтому в коде пути указываются от него:
