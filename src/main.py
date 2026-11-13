@@ -19,8 +19,12 @@ def _no_op(event: ft.ControlEvent):
     """Заглушка обработчика: тап по кнопке даёт ripple, но ничего не делает."""
 
 
-def icon_button(icon_src: str, tooltip: str, on_click) -> ft.Container:
-    """Круглая кнопка с иконкой для button_area."""
+def icon_button(icon_src: str, label: str, on_click) -> ft.Container:
+    """Круглая кнопка с иконкой для button_area.
+
+    Подсказка задана только через semantics_label: виджет tooltip перехватывает
+    долгое нажатие и задерживает эффект тапа (проверено на устройстве).
+    """
     return ft.Container(
         width=BUTTON_SIZE,
         height=BUTTON_SIZE,
@@ -34,7 +38,6 @@ def icon_button(icon_src: str, tooltip: str, on_click) -> ft.Container:
             color=ft.Colors.with_opacity(0.3, ft.Colors.BLACK),
         ),
         alignment=ft.Alignment.CENTER,
-        tooltip=tooltip,
         ink=True,
         on_click=on_click,
         content=ft.Image(
@@ -42,6 +45,7 @@ def icon_button(icon_src: str, tooltip: str, on_click) -> ft.Container:
             width=BUTTON_ICON_SIZE,
             height=BUTTON_ICON_SIZE,
             fit=ft.BoxFit.CONTAIN,
+            semantics_label=label,
         ),
     )
 
