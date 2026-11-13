@@ -38,15 +38,20 @@ $env:USERPROFILE = "$PWD\.flet\home"
 ## Запуск на смартфоне по USB
 
 Инструмент — `tools\run_on_device.cmd` (обёртка над `tools\run_on_device.ps1`),
-внутри — `flet debug android`: сборка debug-APK, установка на телефон через adb
-и запуск. Wi-Fi и приложение Flet из Play Store не нужны.
+внутри — `flet debug android` (`flutter run --no-resident`): сборка debug-APK,
+установка на телефон через adb, запуск. Wi-Fi и приложение Flet из Play Store
+не нужны. Скрипт сам проверяет по `adb shell pidof`, что приложение запустилось,
+печатает «Готово: …» и завершается с кодом 0 — ждать окончания процесса не нужно.
 
 ```powershell
 # toolchain и список подключённых устройств
 cmd /c "tools\run_on_device.cmd -SetupOnly"
 
-# сборка и запуск (ID устройства — из вывода выше)
+# сборка, установка и запуск (ID устройства — из вывода выше)
 cmd /c "tools\run_on_device.cmd -DeviceId 3B161E00W5600000"
+
+# то же, но остаться подключённым: логи и hot reload
+cmd /c "tools\run_on_device.cmd -DeviceId 3B161E00W5600000 -Attach"
 ```
 
 Запускать нужно с полным доступом (`danger-full-access`): Flutter и Gradle
@@ -56,13 +61,17 @@ cmd /c "tools\run_on_device.cmd -DeviceId 3B161E00W5600000"
 
 Проверено на CPH2747 (Android 16, arm64-v8a): первый запуск с нуля — около
 40 минут (≈10 минут toolchain и ≈27 минут `assembleDebug`: NDK, CMake и
-недостающие пакеты SDK доезжают в процессе). Пакет приложения —
-`com.example.my_checklist` (из заглушки `org = "com.example"`; её надо заменить
-до сборки релизного APK).
+недостающие пакеты SDK доезжают в процессе). При готовом toolchain — 30–40
+секунд: инкрементальная `assembleDebug` ≈16 с, установка ≈8 с. Пакет
+приложения — `com.example.my_checklist` (из заглушки `org = "com.example"`;
+её надо заменить до сборки релизного APK).
 
-Процесс не завершается: `flutter run` остаётся подключённым к телефону и печатает
-его логи. Остановка — прервать процесс; приложение на телефоне закрывается через
-`adb shell am force-stop <package>`.
+Приложение после запуска остаётся работать на телефоне — его можно закрыть
+через `adb shell am force-stop com.example.my_checklist`. Повторная проверка без
+пересборки: `adb shell am start -W -n com.example.my_checklist/.MainActivity`
+(меньше секунды). В режиме `-Attach` процесс `flutter run` остаётся
+подключённым; если телефон заблокируется или погаснет экран, связь теряется
+(`Lost connection to device`) и приложение закрывается.
 
 ### Toolchain
 Первый запуск разворачивает всё в `.flet\home` (а не в профиль пользователя —
@@ -95,12 +104,19 @@ cmd /c "tools\run_on_device.cmd -DeviceId 3B161E00W5600000"
   эти каталоги из кэша шаблона
   (`.flet\home\.flet\cache\build-template\v1.1.2`) и ставит рядом маркер
   `android-only.marker`.
+- **Архивы Python для Android берутся из локального кэша.** Плагин
+  `serious_python_android` на каждой сборке делает ETag-запрос к GitHub
+  (`downloadDistArchive_<abi>`) и при ответе `502 Bad Gateway` валит сборку, хотя
+  архивы уже лежат в `.flet\home\.flet\cache\python-build`. Скрипт идемпотентно
+  патчит `build.gradle.kts` плагина в кэше pub: если файл уже скачан, задача
+  пропускается (`StopExecutionException`). Если архива нет, он скачается как обычно.
 
 ### Сеть
-Для сборки нужен доступ к индексу колёс Flet `https://pypi.flet.dev`: для Android
-единственная нативная зависимость Flet — `msgpack`, её Android-колесо есть только
-там. Без VPN/прокси pip падает с `No matching distribution found for
-msgpack>=1.1.0`.
+Индекс колёс Flet `https://pypi.flet.dev` нужен при упаковке Python-кода
+(`flet debug` вызывает pip): для Android единственная нативная зависимость Flet —
+`msgpack`, её Android-колесо есть только там. Без VPN/прокси pip падает с
+`No matching distribution found for msgpack>=1.1.0`. GitHub нужен только за
+архивами `python-build`, и то лишь пока их нет в локальном кэше.
 
 ### Артефакты сборки
 | Путь | Что это |

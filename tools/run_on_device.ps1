@@ -39,6 +39,15 @@
 .PARAMETER WaitSeconds
     Сколько секунд ждать появления авторизованного устройства (по умолчанию 180).
 
+.PARAMETER Attach
+    Оставить процесс подключённым к устройству (`flutter run`): логи и hot reload
+    (`r`/`R`). По умолчанию скрипт завершается сразу после успешного запуска
+    приложения и выходит с кодом 0.
+
+.PARAMETER VerifySeconds
+    Сколько секунд ждать появления процесса приложения на телефоне после
+    завершения `flet debug` (по умолчанию 60).
+
 .PARAMETER ExtraArgs
     Дополнительные аргументы `flet debug`, например `--route=/items`.
 
@@ -51,17 +60,25 @@
 .EXAMPLE
     .\tools\run_on_device.ps1 -DeviceId RF8M123ABCD -Release
 
+.EXAMPLE
+    .\tools\run_on_device.ps1 -DeviceId RF8M123ABCD -Attach
+
 .NOTES
-    Процесс остаётся подключённым к устройству (flutter run) и печатает логи
-    приложения. Для агента это фоновая задача: остановка — прервать процесс и
-    `adb shell am force-stop <package>`.
+    По умолчанию `flutter run` запускается с `--no-resident`: скрипт собирает APK,
+    ставит его на телефон, дожидается запуска приложения (проверка по `pidof`)
+    и завершается. Приложение на телефоне остаётся запущенным.
+
+    С -Attach процесс остаётся подключённым к устройству (логи, hot reload);
+    тогда завершать его нужно вручную (Ctrl+C или прервать фоновую задачу).
 #>
 [CmdletBinding()]
 param(
     [string]$DeviceId,
     [switch]$Release,
     [switch]$SetupOnly,
+    [switch]$Attach,
     [int]$WaitSeconds = 180,
+    [int]$VerifySeconds = 60,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$ExtraArgs
 )
@@ -283,6 +300,59 @@ print(f'убрано desktop-файлов: {dropped}')
     New-Item -ItemType File -Force -Path $marker | Out-Null
 }
 
+function Repair-PythonDistCache {
+    <#
+    .SYNOPSIS
+        Заставляет сборку брать архивы Python для Android из локального кэша.
+
+    .DESCRIPTION
+        Плагин `serious_python_android` на каждом запуске сверяет архивы
+        python-build с GitHub (`downloadDistArchive_<abi>`, ETag-запрос) и падает,
+        если GitHub отвечает 502 — даже когда архивы уже лежат в
+        `.flet\home\.flet\cache\python-build`. Патч добавляет в задачу проверку:
+        если файл уже скачан, в сеть не ходим (StopExecutionException).
+        Патч идемпотентен и применяется к кэшу pub, который в git не попадает.
+    #>
+    $pubCache = Join-Path $FletHome '.pub-cache\hosted\pub.dev'
+    if (-not (Test-Path $pubCache)) {
+        return
+    }
+
+    $patched = 0
+    foreach ($dir in Get-ChildItem -Path $pubCache -Directory -Filter 'serious_python_android-*') {
+        $file = Join-Path $dir.FullName 'android\build.gradle.kts'
+        if (-not (Test-Path $file)) {
+            continue
+        }
+        $text = Get-Content -Raw -Path $file
+        if ($text -match 'DSH-OFFLINE') {
+            continue
+        }
+
+        $old = "        doFirst { distFile.parentFile.mkdirs() }"
+        if (-not $text.Contains($old)) {
+            Write-Host "Не удалось перевести архивы Python на локальный кэш: $file" -ForegroundColor Yellow
+            continue
+        }
+        $new = @"
+        doFirst {
+            distFile.parentFile.mkdirs()
+            // DSH-OFFLINE: архив уже скачан — не ходим на GitHub за ETag.
+            if (distFile.exists() && distFile.length() > 0L) {
+                throw org.gradle.api.tasks.StopExecutionException()
+            }
+        }
+"@
+        $text = $text.Replace($old, $new)
+        [System.IO.File]::WriteAllText($file, $text, (New-Object System.Text.UTF8Encoding($false)))
+        $patched += 1
+    }
+
+    if ($patched -gt 0) {
+        Write-Host "Архивы Python для Android берутся из локального кэша (файлов: $patched)." -ForegroundColor Cyan
+    }
+}
+
 function Get-AdbDevices {
     <#
     .SYNOPSIS
@@ -325,6 +395,64 @@ function Write-DeviceHint {
     Write-Host '  1. телефон подключён кабелем, который передаёт данные (не только зарядка);'
     Write-Host '  2. в настройках разработчика включена "Отладка по USB";'
     Write-Host '  3. на телефоне подтверждён запрос "Разрешить отладку по USB?".'
+}
+
+function Get-AppPackage {
+    <#
+    .SYNOPSIS
+        Возвращает Android-идентификатор приложения (applicationId).
+    #>
+    param([Parameter(Mandatory)][string]$ProjectRoot)
+
+    $gradleDir = Join-Path $ProjectRoot 'build\flutter\android\app'
+    foreach ($fileName in @('build.gradle.kts', 'build.gradle')) {
+        $gradleFile = Join-Path $gradleDir $fileName
+        if (-not (Test-Path $gradleFile)) {
+            continue
+        }
+        $text = Get-Content -Raw -Path $gradleFile
+        if ($text -match 'namespace\s*[= ]\s*"(?<pkg>[^"]+)"') {
+            return $Matches['pkg']
+        }
+        if ($text -match 'applicationId\s*[= ]\s*"?(?<pkg>[\w.]+)"?') {
+            return $Matches['pkg']
+        }
+    }
+
+    # Проект ещё не генерировался — собираем идентификатор так же, как flet:
+    # org из [tool.flet] и имя проекта с недопустимыми символами, заменёнными на `_`.
+    $pyproject = Get-Content -Raw -Path (Join-Path $ProjectRoot 'pyproject.toml')
+    if ($pyproject -notmatch '(?m)^\s*org\s*=\s*"(?<org>[^"]+)"') {
+        throw 'Не удалось определить org приложения: нет namespace в build.gradle и org в pyproject.toml.'
+    }
+    $org = $Matches['org']
+    if ($pyproject -notmatch '(?m)^\s*name\s*=\s*"(?<name>[^"]+)"') {
+        throw 'Не удалось определить имя приложения: нет name в pyproject.toml.'
+    }
+    $safeName = ($Matches['name'].ToLowerInvariant() -replace '[^0-9a-z_]', '_')
+    return "$org.$safeName"
+}
+
+function Wait-AppRunning {
+    <#
+    .SYNOPSIS
+        Ждёт, пока на устройстве появится процесс приложения, и возвращает его PID.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Adb,
+        [Parameter(Mandatory)][string]$Package,
+        [int]$TimeoutSeconds = 60
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $pids = (& $Adb shell pidof $Package 2>$null | Out-String).Trim()
+        if ($pids -match '^\d+') {
+            return ($pids -split '\s+')[0]
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $null
 }
 
 function Resolve-DeviceId {
@@ -386,6 +514,7 @@ $flutterDir = Install-FlutterSdk -Version $flutterVersion
 Ensure-AndroidSdk
 $fletVersion = (& $VenvPython -c 'import flet.version; print(flet.version.flet_version)' | Out-String).Trim()
 Repair-BuildTemplate -FletVersion $fletVersion
+Repair-PythonDistCache
 & $AdbExe start-server | Out-Null
 
 # --- 3. Устройство ----------------------------------------------------------
@@ -420,7 +549,15 @@ if ($ExtraArgs) {
     $fletArgs += $ExtraArgs
 }
 
-Write-Host "Сборка и запуск на устройстве $resolvedId (первая сборка долгая)..." -ForegroundColor Cyan
+# Без -Attach flet запускает `flutter run` с `--no-resident`: сборка, установка,
+# запуск приложения и выход. Аргументы после `--` flet передаёт в flutter run.
+# Приложение при этом остаётся запущенным.
+if (-not $Attach -and -not ($fletArgs -contains '--')) {
+    $fletArgs += @('--', '--no-resident')
+}
+
+$modeText = if ($Attach) { 'с подключением к устройству (Ctrl+C — выход)' } else { 'и выход после запуска' }
+Write-Host "Сборка и запуск на устройстве $resolvedId (первая сборка долгая), $modeText..." -ForegroundColor Cyan
 
 Push-Location $Root
 try {
@@ -429,4 +566,26 @@ try {
 } finally {
     Pop-Location
 }
-exit $code
+
+if ($code -ne 0) {
+    Write-Host "flet debug завершился с кодом $code." -ForegroundColor Red
+    exit $code
+}
+
+if ($Attach) {
+    exit 0
+}
+
+# --- 5. Проверка запуска ----------------------------------------------------
+$package = Get-AppPackage -ProjectRoot $Root
+$appPid = Wait-AppRunning -Adb $AdbExe -Package $package -TimeoutSeconds $VerifySeconds
+if (-not $appPid) {
+    Write-Host "APK собран и установлен, но процесс $package не появился за $VerifySeconds с." -ForegroundColor Red
+    Write-Host 'Проверьте телефон: возможно, приложение упало при старте (adb logcat).' -ForegroundColor Yellow
+    exit 1
+}
+
+Write-Host ''
+Write-Host "Готово: $package собран, установлен и запущен на $resolvedId (pid $appPid)." -ForegroundColor Green
+Write-Host "Приложение можно закрыть: adb shell am force-stop $package"
+exit 0
