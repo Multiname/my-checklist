@@ -5,3 +5,4 @@
 - [features/README.md](features/README.md) - точка входа в документацию списка функций
 - [Design.md](Design.md) - конкретные параметры дизайна
 - [Project.md](Project.md) - детали реализации проекта
+- [скилл run-on-device](../.agents/skills/run-on-device/SKILL.md) - запуск приложения на смартфоне, подключённом по USB
