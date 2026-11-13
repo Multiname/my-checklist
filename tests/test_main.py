@@ -125,12 +125,26 @@ def test_keyboard_visible_without_client_media():
     assert main.ChecklistApp._keyboard_visible(media(pixel_ratio=0)) is False
 
 
+class FakeView:
+    """Корневое представление страницы: перехват «назад» (PopScope)."""
+
+    def __init__(self):
+        self.can_pop = True
+        self.pops = []
+
+    async def confirm_pop(self, should_pop):
+        self.pops.append(should_pop)
+
+
 class FakePage:
     def __init__(self):
         self.tasks = []
         self.updates = 0
         # Клиентских данных о системе ещё нет — клавиатура считается закрытой.
         self.media = media(pixel_ratio=0)
+        self.views = [FakeView()]
+        self.services = []
+        self.controls = []
 
     def run_task(self, handler, *args):
         self.tasks.append((handler, args))
@@ -138,14 +152,46 @@ class FakePage:
     def update(self, *controls):
         self.updates += 1
 
+    def add(self, *controls):
+        self.controls.extend(controls)
+        self.update()
+
+
+class FakeHaptic:
+    def __init__(self):
+        self.calls = []
+
+    async def medium_impact(self):
+        self.calls.append("medium_impact")
+
 
 class FakeStorage:
     def __init__(self):
         self.saved = []
+        self.recovered_backup = None
+
+    def list_categories(self):
+        return []
 
     def set_category_title(self, category_id, title):
         self.saved.append((category_id, title))
         return title
+
+
+def category(category_id, title):
+    return domain.Category(id=category_id, title=title, position=category_id - 1)
+
+
+def make_app(*titles):
+    """Приложение с категориями из titles, без страницы: только состояние."""
+    page = FakePage()
+    haptic = FakeHaptic()
+    app = main.ChecklistApp(page, storage=FakeStorage(), haptic=haptic)
+    views = [
+        app._append_category(category(index + 1, title))
+        for index, title in enumerate(titles)
+    ]
+    return page, app, haptic, views
 
 
 def test_keyboard_close_commits_editing():
@@ -218,4 +264,150 @@ def test_buttons_stay_hidden_while_another_title_is_edited():
 
     # Ввод ещё идёт у второй категории — кнопки остаются скрытыми.
     assert app.button_area.visible is False
+
+
+def test_category_item_wraps_whole_panel_with_long_press():
+    page, app, haptic, (home,) = make_app("Дом")
+
+    item = app.category_list.controls[0]
+
+    assert isinstance(item, ft.GestureDetector)
+    assert item.content is home.panel
+    assert callable(item.on_long_press)
+
+
+def test_list_tap_area_wraps_category_list():
+    page, app, haptic, views = make_app()
+
+    assert app.category_area.content is app.category_list
+    assert app.category_area.on_tap == app._on_tap
+
+
+def test_long_press_selects_category_with_haptic_and_color():
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+
+    asyncio.run(app.category_list.controls[0].on_long_press(None))
+
+    assert app._selected_view is home
+    assert home.selected is True
+    assert home.panel.bgcolor == main.CATEGORY_PANEL_SELECTED_COLOR
+    assert work.panel.bgcolor == main.CATEGORY_PANEL_COLOR
+    assert haptic.calls == ["medium_impact"]
+    assert page.updates == 1
+    # Пока категория выделена, «назад» перехватывается.
+    assert page.views[0].can_pop is False
+
+
+def test_long_press_on_another_category_moves_selection():
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    asyncio.run(app._select_category(home))
+
+    asyncio.run(app.category_list.controls[1].on_long_press(None))
+
+    assert app._selected_view is work
+    assert home.selected is False
+    assert home.panel.bgcolor == main.CATEGORY_PANEL_COLOR
+    assert work.panel.bgcolor == main.CATEGORY_PANEL_SELECTED_COLOR
+    assert len(haptic.calls) == 2
+
+
+def test_repeated_long_press_keeps_single_selection():
+    page, app, haptic, (home,) = make_app("Дом")
+
+    asyncio.run(app._select_category(home))
+    asyncio.run(app._select_category(home))
+
+    assert app._selected_view is home
+    assert haptic.calls == ["medium_impact"]
+
+
+def test_selection_swaps_button_area_buttons():
+    page, app, haptic, (home,) = make_app("Дом")
+
+    # Ничего не выделено: видна только кнопка создания.
+    assert app.create_button.visible is True
+    assert app.rename_button.visible is False
+    assert app.delete_button.visible is False
+
+    asyncio.run(app._select_category(home))
+
+    assert app.create_button.visible is False
+    assert app.rename_button.visible is True
+    assert app.delete_button.visible is True
+
+    app._deselect()
+
+    assert app.create_button.visible is True
+    assert app.rename_button.visible is False
+    assert app.delete_button.visible is False
+
+
+def test_tap_on_list_deselects_category():
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    asyncio.run(app._select_category(home))
+    page.updates = 0
+
+    app.category_area.on_tap(None)
+
+    assert app._selected_view is None
+    assert home.selected is False
+    assert home.panel.bgcolor == main.CATEGORY_PANEL_COLOR
+    assert page.views[0].can_pop is True
+    assert page.updates == 1
+
+
+def test_tap_without_selection_changes_nothing():
+    page, app, haptic, views = make_app("Дом")
+    page.updates = 0
+
+    app.category_area.on_tap(None)
+
+    assert app._selected_view is None
+    assert page.updates == 0
+
+
+def test_tap_that_closes_keyboard_keeps_selection():
+    """Тап, закрывающий клавиатуру при вводе названия, выделение не снимает."""
+    page, app, haptic, (home, editing) = make_app("Дом", "Работа")
+    asyncio.run(app._select_category(home))
+    app._begin_title_input(editing)
+
+    app.category_area.on_tap(None)
+
+    assert app._selected_view is home
+    assert home.selected is True
+
+
+def test_back_with_selection_deselects_without_closing_app():
+    page, app, haptic, (home,) = make_app("Дом")
+    asyncio.run(app._select_category(home))
+
+    asyncio.run(app._on_confirm_pop(None))
+
+    assert app._selected_view is None
+    assert home.selected is False
+    assert home.panel.bgcolor == main.CATEGORY_PANEL_COLOR
+    assert page.views[0].can_pop is True
+    # False — не выходить из приложения.
+    assert page.views[0].pops == [False]
+
+
+def test_back_without_selection_closes_app():
+    page, app, haptic, views = make_app("Дом")
+
+    asyncio.run(app._on_confirm_pop(None))
+
+    # True — обычное поведение: «назад» закрывает приложение.
+    assert page.views[0].pops == [True]
+
+
+def test_mount_registers_haptic_and_back_interception():
+    page = FakePage()
+    app = main.ChecklistApp(page, storage=FakeStorage())
+
+    asyncio.run(app.mount())
+
+    assert isinstance(app.haptic, ft.HapticFeedback)
+    assert page.services == [app.haptic]
+    assert page.views[0].on_confirm_pop == app._on_confirm_pop
 

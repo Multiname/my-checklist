@@ -23,6 +23,10 @@ BUTTON_AREA_HEIGHT = BUTTON_SIZE * 3 + BUTTON_SPACING * 2
 LIST_PADDING = 16
 CATEGORY_SPACING = 8
 CATEGORY_PANEL_COLOR = ft.Colors.SURFACE_CONTAINER_HIGH
+# Выделенная категория отличается от остальных цветом панели:
+# фоновый SURFACE_CONTAINER_HIGH слишком близок к SECONDARY_CONTAINER,
+# поэтому берётся розовый TERTIARY_CONTAINER — его видно сразу.
+CATEGORY_PANEL_SELECTED_COLOR = ft.Colors.TERTIARY_CONTAINER
 CATEGORY_PANEL_RADIUS = 12
 CATEGORY_PANEL_PADDING = ft.Padding.symmetric(horizontal=16, vertical=12)
 CATEGORY_TITLE_SIZE = 20
@@ -124,6 +128,17 @@ def create_category_panel(title: str) -> ft.Container:
     )
 
 
+def create_category_item(panel: ft.Container, on_long_press) -> ft.GestureDetector:
+    """Область категории в списке: долгое нажатие по всей панели.
+
+    Долгое нажатие обрабатывает обёртка, а не сама панель: `Container`
+    с `on_long_press` строит `GestureDetector` с поведением `deferToChild`
+    и теряет нажатия по отступам панели (там нет текста). `GestureDetector`
+    Flet попадание не ограничивает — срабатывает по всей площади.
+    """
+    return ft.GestureDetector(content=panel, on_long_press=on_long_press)
+
+
 def create_category_list() -> ft.ListView:
     """Список категорий на весь экран: прокручивается, не уходит под кнопки."""
     return ft.ListView(
@@ -141,6 +156,16 @@ def create_category_list() -> ft.ListView:
         build_controls_on_demand=False,
         auto_scroll=False,
     )
+
+
+def create_category_area(category_list: ft.ListView, on_tap) -> ft.GestureDetector:
+    """Область списка: тап по ней снимает выделение категории.
+
+    Тап ловит обёртка списка, а не экран целиком: `button_area` лежит выше
+    в `Stack`, поэтому тапы по кнопкам сюда не доходят. Прокрутка выделение
+    не снимает — жест переходит к списку (drag побеждает в арене жестов).
+    """
+    return ft.GestureDetector(content=category_list, on_tap=on_tap)
 
 
 def create_category_input(hint_text: str, on_commit) -> ft.TextField:
@@ -169,7 +194,7 @@ def create_category_input(hint_text: str, on_commit) -> ft.TextField:
 
 
 class CategoryView:
-    """Категория на экране: панель с названием и состояние ввода названия."""
+    """Категория на экране: панель с названием, выделение и ввод названия."""
 
     def __init__(self, category: domain.Category) -> None:
         self.category = category
@@ -177,41 +202,73 @@ class CategoryView:
         self.panel = create_category_panel(self.title)
         self.title_text: ft.Text = self.panel.content
         self.input: ft.TextField | None = None
+        self.item: ft.GestureDetector | None = None
+        self.selected = False
 
     @property
     def is_editing(self) -> bool:
         return self.input is not None
 
+    def set_selected(self, selected: bool) -> None:
+        """Выделенная категория отличается от остальных цветом панели."""
+        self.selected = selected
+        self.panel.bgcolor = (
+            CATEGORY_PANEL_SELECTED_COLOR if selected else CATEGORY_PANEL_COLOR
+        )
+
 
 class ChecklistApp:
     """Экран списка категорий и обработчики button_area."""
 
-    def __init__(self, page: ft.Page, storage: Storage) -> None:
+    def __init__(
+        self,
+        page: ft.Page,
+        storage: Storage,
+        haptic: ft.HapticFeedback | None = None,
+    ) -> None:
         self.page = page
         self.storage = storage
+        # Сервис виброотклика: если не передан, создаётся в mount().
+        self.haptic = haptic
         self.views: dict[int, CategoryView] = {}
         self.category_list = create_category_list()
+        self.category_area = create_category_area(self.category_list, self._on_tap)
         self.button_area = create_button_area(self.create_category)
+        (
+            self.create_button,
+            self.rename_button,
+            self.delete_button,
+        ) = self.button_area.content.controls
         self._editing_view: CategoryView | None = None
+        self._selected_view: CategoryView | None = None
         self._keyboard_open = False
+        self._apply_selection()
 
     async def mount(self) -> None:
         """Загружает категории из БД и собирает экран."""
         for category in await asyncio.to_thread(self.storage.list_categories):
             self._append_category(category)
+        if self.haptic is None:
+            self.haptic = ft.HapticFeedback()
+            self.page.services.append(self.haptic)
         self.page.add(
             ft.SafeArea(
                 expand=True,
                 content=ft.Stack(
                     expand=True,
                     fit=ft.StackFit.EXPAND,
-                    controls=[self.category_list, self.button_area],
+                    controls=[self.category_area, self.button_area],
                 ),
             )
         )
         # Жест «назад» на Android закрывает клавиатуру, не снимая фокус
         # с поля и не присылая on_blur: ввод завершаем по скрытию клавиатуры.
         self.page.on_media_change = self._on_media_change
+        # «Назад» при выделенной категории перехватывается: вместо выхода
+        # из приложения снимается выделение (см. _on_confirm_pop).
+        self.page.views[0].on_confirm_pop = self._on_confirm_pop
+        # Обработчики выше назначены после add() — отправляем их клиенту.
+        self.page.update()
         if self.storage.recovered_backup is not None:
             self._show_message(
                 "Файл данных был повреждён: создана пустая база. Прежние данные "
@@ -254,8 +311,68 @@ class ChecklistApp:
     def _append_category(self, category: domain.Category) -> CategoryView:
         view = CategoryView(category)
         self.views[category.id] = view
-        self.category_list.controls.append(view.panel)
+        view.item = create_category_item(view.panel, self._long_press_handler(view))
+        self.category_list.controls.append(view.item)
         return view
+
+    def _long_press_handler(self, view: CategoryView):
+        async def handle_long_press(event: ft.ControlEvent) -> None:
+            await self._select_category(view)
+
+        return handle_long_press
+
+    async def _select_category(self, view: CategoryView) -> None:
+        """Выделяет категорию: другой цвет панели, виброотклик, кнопки."""
+        if view is self._selected_view:
+            return
+        if self._selected_view is not None:
+            self._selected_view.set_selected(False)
+        self._selected_view = view
+        view.set_selected(True)
+        self._apply_selection()
+        self.page.update()
+        if self.haptic is not None:
+            await self.haptic.medium_impact()
+
+    def _on_tap(self, event: ft.ControlEvent | None = None) -> None:
+        """Тап по списку снимает выделение.
+
+        Тап, которым закрывают клавиатуру, выделение не снимает: он приходит
+        вместе с завершением ввода названия, а выделение должно пережить
+        закрытие клавиатуры.
+        """
+        if self._editing_view is not None:
+            return
+        self._deselect()
+
+    def _deselect(self) -> None:
+        view = self._selected_view
+        if view is None:
+            return
+        self._selected_view = None
+        view.set_selected(False)
+        self._apply_selection()
+        self.page.update()
+
+    def _apply_selection(self) -> None:
+        """Показывает кнопки, подходящие текущему выделению и вводу."""
+        selected = self._selected_view is not None
+        self.create_button.visible = not selected
+        self.rename_button.visible = selected
+        self.delete_button.visible = selected
+        # Пока идёт ввод, контейнер скрыт целиком (см. feature-button-area.md).
+        self.button_area.visible = self._editing_view is None
+        # Пока категория выделена, «назад» перехватывается и снимает
+        # выделение вместо закрытия приложения.
+        self.page.views[0].can_pop = not selected
+
+    async def _on_confirm_pop(self, event: ft.ControlEvent) -> None:
+        """Кнопка или жест «назад»: снимает выделение, не закрывая приложение."""
+        view = self.page.views[-1]
+        selected = self._selected_view is not None
+        if selected:
+            self._deselect()
+        await view.confirm_pop(not selected)
 
     async def _start_title_input(self, view: CategoryView) -> None:
         """Показывает поле ввода на месте названия и открывает клавиатуру."""
@@ -275,7 +392,7 @@ class ChecklistApp:
         self._editing_view = view
         # Пока идёт ввод, кнопки скрыты: клавиатура иначе поднимала бы их
         # вместе с содержимым, и они перекрывали бы список.
-        self.button_area.visible = False
+        self._apply_selection()
         # Клавиатура может быть уже открыта (ввод уже начат).
         self._keyboard_open = self._keyboard_visible(self.page.media)
         # Патч с новым полем должен уйти раньше вызова focus(): иначе клиент
@@ -316,7 +433,7 @@ class ChecklistApp:
         view.panel.content = view.title_text
         if self._editing_view is None:
             # Ввод завершён — кнопки возвращаются в правый нижний угол.
-            self.button_area.visible = True
+            self._apply_selection()
         # Финиш может прийти из задачи (закрытие клавиатуры), а не из события:
         # автообновление в этом случае не сработает, поэтому обновляем явно.
         self.page.update()

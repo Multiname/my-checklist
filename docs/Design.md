@@ -15,6 +15,10 @@
   содержимым при появлении клавиатуры (Android `adjustResize`) и не перекрывают
   ввод; после сохранения названия контейнер возвращается в правый нижний угол.
   Скрытие и возврат выполняются без анимации
+- Состав кнопок зависит от выделения: без выделения видна только
+  `create_category`, при выделенной категории — `rename_category` и
+  `delete_category`. Переключение — свойством `visible` у самих кнопок, без
+  анимации; контейнер при этом остаётся на месте
 - Нижний отступ списка при этом не меняется (постоянный `LIST_BOTTOM_PADDING`),
   поэтому список не сдвигается, когда кнопки скрываются и появляются снова
 - Кнопки: круглые, **56×56**, выстроены вертикально, промежуток между
@@ -67,6 +71,12 @@
 - Панель: скруглённый прямоугольник (радиус **12**), фон
   `ft.Colors.SURFACE_CONTAINER_HIGH`, отступы **16** по горизонтали и **12** по
   вертикали, ширина — вся ширина списка
+- Выделенная категория: фон `ft.Colors.TERTIARY_CONTAINER` (розовый).
+  Material-пара для выделения — `SECONDARY_CONTAINER`, но он почти неотличим от
+  фонового `SURFACE_CONTAINER_HIGH` (разница только в оттенке), поэтому взят
+  контрастный по тону `TERTIARY_CONTAINER`. Остальные параметры панели не
+  меняются, поэтому список не «прыгает» при выделении
+- Выделение сопровождается виброоткликом (`HapticFeedback.medium_impact()`)
 - Название: **20** px, `FontWeight.BOLD`, межстрочная высота **1.45**, не более
   **2** строк, дальше `ELLIPSIS`; крупнее текста пунктов (пункты появятся на
   этапе 3)
@@ -85,6 +95,7 @@
 
 ### Константы списка и категории
 Заданы в `src/main.py`: `LIST_PADDING`, `LIST_BOTTOM_PADDING`,
-`CATEGORY_SPACING`, `CATEGORY_PANEL_COLOR`, `CATEGORY_PANEL_RADIUS`,
-`CATEGORY_PANEL_PADDING`, `CATEGORY_TITLE_SIZE`, `CATEGORY_TITLE_WEIGHT`,
-`CATEGORY_TITLE_LINE_HEIGHT`, `CATEGORY_TITLE_STYLE`, `CATEGORY_HINT_STYLE`.
+`CATEGORY_SPACING`, `CATEGORY_PANEL_COLOR`, `CATEGORY_PANEL_SELECTED_COLOR`,
+`CATEGORY_PANEL_RADIUS`, `CATEGORY_PANEL_PADDING`, `CATEGORY_TITLE_SIZE`,
+`CATEGORY_TITLE_WEIGHT`, `CATEGORY_TITLE_LINE_HEIGHT`, `CATEGORY_TITLE_STYLE`,
+`CATEGORY_HINT_STYLE`.
