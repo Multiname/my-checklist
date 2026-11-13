@@ -5,6 +5,7 @@
 |---|---|
 | `pyproject.toml` | метаданные проекта, зависимости, настройки pytest и Flet |
 | `src/main.py` | точка входа приложения (`ft.run(main)`); каталог приложения задан в `[tool.flet.app] path = "src"` |
+| `src/assets/icons/` | иконки кнопок `button_area` (`.webp`, 64×64) |
 | `tests/` | тесты (`pytest`, `pythonpath = ["src"]`) |
 | `tools/run_on_device.ps1` | запуск приложения на телефоне по USB: toolchain, adb, `flet debug android` |
 | `tools/run_on_device.cmd` | обёртка для обхода политики запуска сценариев PowerShell |
@@ -12,8 +13,22 @@
 | `docs/` | документация проекта |
 | `README.md` | краткое описание и команды запуска |
 
-Сейчас приложение показывает только заглушку «Чеклист» — экран будет заменён
-на этапе 2.
+## Экран и ассеты
+Сейчас экран — заглушка «Чеклист» и `button_area` в правом нижнем углу;
+прокручиваемый список категорий и логика кнопок появятся в следующих задачах
+этапа 2. Пока видны все три кнопки: показ `rename_category` и
+`delete_category` только при выделенной категории — задача 3 этапа.
+
+`button_area` реализована в `src/main.py`: `icon_button()` — круглая кнопка
+с иконкой, `create_button_area()` — контейнер из трёх кнопок
+(`create_category`, `rename_category`, `delete_category`), закреплённый
+свойствами `right`/`bottom` в `ft.Stack`. Параметры внешнего вида — в
+[Design.md](Design.md).
+
+Ассеты — `src/assets`; `flet run` и `flet build` ищут каталог `assets`
+относительно `main.py`, поэтому в коде пути указываются от него:
+`ft.Image(src="icons/plus-sign.webp")`. Тест `tests/test_main.py` проверяет,
+что файлы иконок на месте.
 
 `org = "com.example"` в `[tool.flet]` — заглушка для Android-идентификатора
 приложения; её нужно заменить до сборки APK.
