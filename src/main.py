@@ -104,7 +104,9 @@ def icon_button(icon_src: str, label: str, on_click) -> ft.Container:
     )
 
 
-def create_button_area(on_create_category=_no_op) -> ft.Container:
+def create_button_area(
+    on_create_category=_no_op, on_rename_category=_no_op
+) -> ft.Container:
     """button_area: контейнер с кнопками управления категориями справа снизу."""
     return ft.Container(
         right=BUTTON_AREA_MARGIN,
@@ -114,7 +116,9 @@ def create_button_area(on_create_category=_no_op) -> ft.Container:
             tight=True,
             controls=[
                 icon_button(ICON_PLUS, "Создать категорию", on_create_category),
-                icon_button(ICON_PENCIL, "Переименовать категорию", _no_op),
+                icon_button(
+                    ICON_PENCIL, "Переименовать категорию", on_rename_category
+                ),
                 icon_button(ICON_TRASH, "Удалить категорию", _no_op),
             ],
         ),
@@ -182,13 +186,14 @@ def create_category_list() -> ft.ReorderableListView:
 
 
 def create_category_area(
-    category_list: ft.ReorderableListView, on_tap
+    category_list: ft.ReorderableListView, on_tap, on_tap_cancel=None
 ) -> ft.Container:
     """Область списка: тап по ней снимает выделение категории.
 
     Тап ловит обёртка списка, а не экран целиком: `button_area` лежит выше
     в `Stack`, поэтому тапы по кнопкам сюда не доходят. Прокрутка выделение
-    не снимает — жест переходит к списку (drag побеждает в арене жестов).
+    не снимает — жест переходит к списку (drag побеждает в арене жестов);
+    `on_tap_cancel` сообщает, что жест перестал быть тапом.
 
     Вложенная тема (`LIST_THEME`) нужна прокси перетаскивания: он лежит выше
     списка в overlay, но наследует темы, захваченные у элемента, поэтому
@@ -196,18 +201,28 @@ def create_category_area(
     """
     return ft.Container(
         theme=LIST_THEME,
-        content=ft.GestureDetector(content=category_list, on_tap=on_tap),
+        content=ft.GestureDetector(
+            content=category_list,
+            on_tap=on_tap,
+            on_tap_cancel=on_tap_cancel,
+        ),
     )
 
 
-def create_category_input(hint_text: str, on_commit) -> ft.TextField:
+def create_category_input(
+    hint_text: str, on_commit, value: str = "", on_tap_outside=None
+) -> ft.TextField:
     """Поле ввода названия на месте названия категории.
 
     Клавиатура появляется за счёт autofocus; ввод завершается кнопкой действия
     клавиатуры, тапом вне поля, потерей фокуса и скрытием клавиатуры
-    (жест «назад» обрабатывается через page.on_media_change).
+    (жест «назад» обрабатывается через page.on_media_change и PopScope).
+    ``value`` — прежнее название: при переименовании поле сразу заполнено им.
+    ``on_tap_outside`` — отдельный обработчик тапа вне поля: он ещё и помечает,
+    что клавиатуру закрыл именно тап (см. ChecklistApp._on_tap).
     """
     return ft.TextField(
+        value=value,
         hint_text=hint_text,
         hint_style=CATEGORY_HINT_STYLE,
         text_style=CATEGORY_TITLE_STYLE,
@@ -221,7 +236,7 @@ def create_category_input(hint_text: str, on_commit) -> ft.TextField:
         autofocus=True,
         on_submit=on_commit,
         on_blur=on_commit,
-        on_tap_outside=on_commit,
+        on_tap_outside=on_tap_outside or on_commit,
     )
 
 
@@ -269,8 +284,12 @@ class ChecklistApp:
         self.category_list.on_reorder_start = self._on_reorder_start
         self.category_list.on_reorder = self._on_reorder
         self.category_list.on_reorder_end = self._on_reorder_end
-        self.category_area = create_category_area(self.category_list, self._on_tap)
-        self.button_area = create_button_area(self.create_category)
+        self.category_area = create_category_area(
+            self.category_list, self._on_tap, self._on_tap_cancel
+        )
+        self.button_area = create_button_area(
+            self.create_category, self.rename_category
+        )
         (
             self.create_button,
             self.rename_button,
@@ -281,6 +300,9 @@ class ChecklistApp:
         # Идёт перетаскивание категории: кнопки button_area скрыты целиком.
         self._dragging = False
         self._keyboard_open = False
+        # Тап вне поля закрыл клавиатуру: следующий on_tap списка — тот же
+        # самый тап, он не должен снимать выделение (см. _on_tap).
+        self._tap_ended_input = False
         self._apply_selection()
 
     async def mount(self) -> None:
@@ -345,7 +367,24 @@ class ChecklistApp:
             self._show_message("Не удалось создать категорию")
             return
         view = self._append_category(category)
-        await self._start_title_input(view)
+        await self._start_title_input(view, scroll_to_end=True)
+
+    async def rename_category(
+        self, event: ft.ControlEvent | None = None
+    ) -> None:
+        """rename_category: ввод нового названия вместо названия категории.
+
+        Поле открывается с прежним названием выделенной категории, поэтому
+        ввод можно дополнить, а не набирать заново. Выделение при
+        переименовании не снимается: после сохранения кнопки
+        `rename_category`/`delete_category` остаются на месте.
+        """
+        view = self._selected_view
+        if view is None or self._editing_view is not None:
+            # Кнопка показана только при выделенной категории; ввод названия
+            # скрывает button_area целиком, повторный вызов невозможен.
+            return
+        await self._start_title_input(view, initial=view.title)
 
     def _append_category(self, category: domain.Category) -> CategoryView:
         view = CategoryView(category)
@@ -450,18 +489,35 @@ class ChecklistApp:
         self.page.update()
 
     def _on_tap(self, event: ft.ControlEvent | None = None) -> None:
-        """Тап по списку снимает выделение.
+        """Тап по списку завершает ввод названия или снимает выделение.
 
-        Тап, которым закрывают клавиатуру, выделение не снимает: он приходит
-        вместе с завершением ввода названия, а выделение должно пережить
-        закрытие клавиатуры.
+        Тап, которым закрывают клавиатуру, выделение не снимает: ввод
+        завершается, а выделенная категория остаётся выделенной (см.
+        feature-category.md). Тот же тап приходит и вторым событием — тапом
+        списка; его отсекает флаг `_tap_ended_input`, выставленный
+        обработчиком `on_tap_outside` поля ввода.
         """
         # Тап возможен только когда перетаскивания уже нет. Если система
         # прервала жест, не прислав on_reorder_end, кнопки остались бы скрытыми.
         self._end_drag()
         if self._editing_view is not None:
+            # Ввод закончится сохранением названия; выделение не трогаем.
+            self._commit_editing()
+            return
+        if self._tap_ended_input:
+            # Это тот же тап, что уже закрыл клавиатуру (on_tap_outside поля
+            # приходит раньше on_tap списка): выделение остаётся.
+            self._tap_ended_input = False
             return
         self._deselect()
+
+    def _on_tap_cancel(self, event: ft.ControlEvent | None = None) -> None:
+        """Жест перестал быть тапом: флаг «этот тап закрыл клавиатуру» снят.
+
+        Иначе, если тап вне поля превратится в прокрутку, флаг остался бы
+        выставленным и съел следующий, уже обычный тап по списку.
+        """
+        self._tap_ended_input = False
 
     def _deselect(self) -> None:
         view = self._selected_view
@@ -475,40 +531,70 @@ class ChecklistApp:
     def _apply_selection(self) -> None:
         """Показывает кнопки, подходящие текущему выделению и вводу."""
         selected = self._selected_view is not None
+        editing = self._editing_view is not None
         self.create_button.visible = not selected
         self.rename_button.visible = selected
         self.delete_button.visible = selected
         # Пока идёт ввод названия или перетаскивание категории, контейнер
         # скрыт целиком (см. feature-button-area.md).
-        self.button_area.visible = self._editing_view is None and not self._dragging
-        # Пока категория выделена, «назад» перехватывается и снимает
-        # выделение вместо закрытия приложения.
-        self.page.views[0].can_pop = not selected
+        self.button_area.visible = not editing and not self._dragging
+        # Пока категория выделена или идёт ввод названия, «назад»
+        # перехватывается вместо закрытия приложения: он снимает выделение
+        # либо завершает ввод (см. _on_confirm_pop).
+        self.page.views[0].can_pop = not selected and not editing
 
     async def _on_confirm_pop(self, event: ft.ControlEvent) -> None:
-        """Кнопка или жест «назад»: снимает выделение, не закрывая приложение."""
+        """Кнопка или жест «назад»: завершает ввод или снимает выделение.
+
+        Приложение при этом не закрывается. «Назад» во время ввода названия
+        сохраняет введённое название и оставляет выделение: по спеке ввод
+        заканчивается и кнопкой «назад» (см. feature-category.md). Пока
+        открыта клавиатура, первый «назад» обычно забирает Android; сюда он
+        приходит, когда клавиатуры уже нет или её закрытие не отследилось.
+        """
         view = self.page.views[-1]
+        if self._editing_view is not None:
+            await self._finish_title_input(self._editing_view)
+            await view.confirm_pop(False)
+            return
         selected = self._selected_view is not None
         if selected:
             self._deselect()
         await view.confirm_pop(not selected)
 
-    async def _start_title_input(self, view: CategoryView) -> None:
-        """Показывает поле ввода на месте названия и открывает клавиатуру."""
-        field = self._begin_title_input(view)
-        # Категория добавлена в конец — доскролливаем, чтобы поле было видно.
-        await self.category_list.scroll_to(offset=-1)
+    async def _start_title_input(
+        self,
+        view: CategoryView,
+        initial: str | None = None,
+        scroll_to_end: bool = False,
+    ) -> None:
+        """Показывает поле ввода на месте названия и открывает клавиатуру.
+
+        ``initial`` — прежнее название: при переименовании поле заполнено им.
+        ``scroll_to_end`` — для новой категории: она добавлена в конец, и её
+        надо доскроллить, чтобы поле было видно. Переименовываемая категория
+        уже на экране (её выделяли), а поле в фокусе Flutter сам показывает
+        на экране.
+        """
+        field = self._begin_title_input(view, initial)
+        if scroll_to_end:
+            await self.category_list.scroll_to(offset=-1)
         await field.focus()
 
-    def _begin_title_input(self, view: CategoryView) -> ft.TextField:
+    def _begin_title_input(
+        self, view: CategoryView, initial: str | None = None
+    ) -> ft.TextField:
         """Переводит категорию в режим ввода и скрывает кнопки button_area."""
         field = create_category_input(
             hint_text=domain.DEFAULT_CATEGORY_TITLE,
+            value=initial or "",
             on_commit=self._title_commit_handler(view),
+            on_tap_outside=self._title_tap_outside_handler(view),
         )
         view.input = field
         view.panel.content = field
         self._editing_view = view
+        self._tap_ended_input = False
         # Пока идёт ввод, кнопки скрыты: клавиатура иначе поднимала бы их
         # вместе с содержимым, и они перекрывали бы список.
         self._apply_selection()
@@ -524,6 +610,23 @@ class ChecklistApp:
             await self._finish_title_input(view)
 
         return commit
+
+    def _title_tap_outside_handler(self, view: CategoryView):
+        """Тап вне поля: завершает ввод и помечает, что тап уже обработан.
+
+        `on_tap_outside` приходит на нажатие, а `on_tap` списка — на отпускание,
+        поэтому без флага тот же самый тап снял бы выделение, чего спека не
+        разрешает. Флаг выставляется, только если ввод ещё идёт: если тап
+        списка пришёл первым и уже завершил ввод, помечать нечего.
+        """
+
+        async def tap_outside(event: ft.ControlEvent) -> None:
+            if view.input is None:
+                return
+            self._tap_ended_input = True
+            await self._finish_title_input(view)
+
+        return tap_outside
 
     async def _finish_title_input(self, view: CategoryView) -> None:
         """Сохраняет введённое название и возвращает на панель текст."""
