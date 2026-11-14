@@ -205,9 +205,11 @@ class FakeStorage:
     def __init__(self):
         self.saved = []
         self.moved = []
+        self.deleted = []
         self.categories = []
         self.fail_move = False
         self.fail_save = False
+        self.fail_delete = False
         self.recovered_backup = None
 
     def list_categories(self):
@@ -228,6 +230,18 @@ class FakeStorage:
         moved = self.categories.pop(ids.index(category_id))
         new_position = max(0, min(new_position, len(self.categories)))
         self.categories.insert(new_position, moved)
+        return [
+            domain.Category(id=item.id, title=item.title, position=position)
+            for position, item in enumerate(self.categories)
+        ]
+
+    def delete_category(self, category_id):
+        """Повторяет правила настоящего хранилища: удаление и порядок без дыр."""
+        self.deleted.append(category_id)
+        if self.fail_delete:
+            raise storage.StorageError("нет места")
+        ids = [item.id for item in self.categories]
+        self.categories.pop(ids.index(category_id))
         return [
             domain.Category(id=item.id, title=item.title, position=position)
             for position, item in enumerate(self.categories)
@@ -649,6 +663,24 @@ def test_rename_button_uses_app_handler():
     assert app.rename_button.on_click == app.rename_category
 
 
+def test_delete_button_uses_app_handler():
+    page, app, haptic, views = make_app("Дом")
+
+    assert app.delete_button.on_click == app.delete_category
+
+
+def test_delete_button_runs_given_handler():
+    events = []
+    button_area = main.create_button_area(
+        main._no_op, main._no_op, lambda event: events.append(event)
+    )
+    delete_category = button_area.content.controls[2]
+
+    delete_category.on_click(None)
+
+    assert len(events) == 1
+
+
 def test_list_tap_area_forwards_the_tap_cancel():
     page, app, haptic, views = make_app("Дом")
 
@@ -877,5 +909,96 @@ def test_list_tap_while_editing_saves_title_without_deselecting():
     asyncio.run(app._finish_title_input(home))
     assert home.title == "Квартира"
     assert app._selected_view is home
+
+
+def test_delete_removes_selected_category_from_list_and_storage():
+    page, app, haptic, (home, work, rest) = make_app("Дом", "Работа", "Отдых")
+    app._select_category(work)
+    page.updates = 0
+
+    asyncio.run(app.delete_category(None))
+
+    # Категория удалена и из БД, и из списка на экране.
+    assert app.storage.deleted == [work.category.id]
+    assert app.views == [home, rest]
+    assert app.category_list.controls == [home.item, rest.item]
+    # Позиции оставшихся — из БД, без дыр в порядке.
+    assert [view.category.position for view in app.views] == [0, 1]
+    # Выделение снято: удалённой категории больше нет, кнопки — исходные.
+    assert app._selected_view is None
+    assert app.create_button.visible is True
+    assert app.rename_button.visible is False
+    assert app.delete_button.visible is False
+    assert app.button_area.visible is True
+    assert page.views[0].can_pop is True
+    assert page.updates == 1
+
+
+def test_delete_only_the_selected_category():
+    page, app, haptic, (home, work, rest) = make_app("Дом", "Работа", "Отдых")
+    app._select_category(rest)
+
+    asyncio.run(app.delete_category(None))
+
+    assert app.storage.deleted == [rest.category.id]
+    assert [view.title for view in app.views] == ["Дом", "Работа"]
+
+
+def test_delete_without_selection_does_nothing():
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    page.updates = 0
+
+    asyncio.run(app.delete_category(None))
+
+    assert app.storage.deleted == []
+    assert app.views == [home, work]
+    assert page.updates == 0
+
+
+def test_delete_write_error_keeps_category_and_reports():
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    app._select_category(home)
+    app.storage.fail_delete = True
+
+    asyncio.run(app.delete_category(None))
+
+    # Коммит до UI: при ошибке список и выделение остаются прежними.
+    assert app.views == [home, work]
+    assert app.category_list.controls == [home.item, work.item]
+    assert app._selected_view is home
+    assert home.selected is True
+    assert home.panel.bgcolor == main.CATEGORY_PANEL_SELECTED_COLOR
+    assert app.delete_button.visible is True
+    assert page.messages == ["Не удалось удалить категорию"]
+
+
+def test_delete_while_editing_title_drops_input_state():
+    """Ввод и та же категория: поле уходит вместе с панелью, кнопки — назад."""
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    app._select_category(home)
+    app._begin_title_input(home, home.title)
+
+    asyncio.run(app.delete_category(None))
+
+    assert app.storage.deleted == [home.category.id]
+    assert app._editing_view is None
+    assert home.input is None
+    assert app.views == [work]
+    assert app.button_area.visible is True
+    assert page.views[0].can_pop is True
+
+
+def test_delete_category_after_edit_does_not_write_deleted_title():
+    """Завершение ввода после удаления не пишет название удалённой категории."""
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    app._select_category(home)
+    field = app._begin_title_input(home, home.title)
+
+    asyncio.run(app.delete_category(None))
+    field.value = "Квартира"
+    asyncio.run(app._finish_title_input(home))
+
+    assert app.storage.saved == []
+    assert app.views == [work]
 
 

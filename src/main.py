@@ -105,7 +105,7 @@ def icon_button(icon_src: str, label: str, on_click) -> ft.Container:
 
 
 def create_button_area(
-    on_create_category=_no_op, on_rename_category=_no_op
+    on_create_category=_no_op, on_rename_category=_no_op, on_delete_category=_no_op
 ) -> ft.Container:
     """button_area: контейнер с кнопками управления категориями справа снизу."""
     return ft.Container(
@@ -119,7 +119,7 @@ def create_button_area(
                 icon_button(
                     ICON_PENCIL, "Переименовать категорию", on_rename_category
                 ),
-                icon_button(ICON_TRASH, "Удалить категорию", _no_op),
+                icon_button(ICON_TRASH, "Удалить категорию", on_delete_category),
             ],
         ),
     )
@@ -288,7 +288,7 @@ class ChecklistApp:
             self.category_list, self._on_tap, self._on_tap_cancel
         )
         self.button_area = create_button_area(
-            self.create_category, self.rename_category
+            self.create_category, self.rename_category, self.delete_category
         )
         (
             self.create_button,
@@ -386,11 +386,51 @@ class ChecklistApp:
             return
         await self._start_title_input(view, initial=view.title)
 
+    async def delete_category(self, event: ft.ControlEvent | None = None) -> None:
+        """delete_category: удаляет выделенную категорию из списка и из БД.
+
+        Запись в БД — до обновления экрана: при ошибке категория остаётся на
+        месте и показывается сообщение. Вместе с категорией каскадом уходят её
+        пункты (см. docs/features/feature-storage.md). Выделение снимается:
+        удалённой категории больше нет, кнопки возвращаются к исходному составу.
+        Порядок оставшихся берётся из БД, как и после перетаскивания.
+        """
+        view = self._selected_view
+        if view is None:
+            # Кнопка показана только при выделенной категории.
+            return
+        if self._editing_view is view:
+            # Ввод названия скрывает button_area целиком, так что сюда не
+            # попадают; если состояние всё же такое, поле уходит вместе с
+            # панелью, а не остаётся фокусом у несуществующей категории.
+            view.input = None
+            self._editing_view = None
+            self._keyboard_open = False
+        try:
+            ordered = await asyncio.to_thread(
+                self.storage.delete_category, view.category.id
+            )
+        except Exception:
+            logger.exception("Не удалось удалить категорию")
+            self._show_message("Не удалось удалить категорию")
+            return
+        self._remove_view(view)
+        self._selected_view = None
+        self._apply_category_order(ordered)
+        self._apply_selection()
+        self.page.update()
+
     def _append_category(self, category: domain.Category) -> CategoryView:
         view = CategoryView(category)
         self.views.append(view)
         self.category_list.controls.append(view.item)
         return view
+
+    def _remove_view(self, view: CategoryView) -> None:
+        """Убирает категорию из списка в памяти и из списка элементов."""
+        if view in self.views:
+            self.views.remove(view)
+        self.category_list.controls = [item.item for item in self.views]
 
     def _view_at(self, index: int | None) -> CategoryView | None:
         """Категория по индексу из события списка; None — если такого нет."""

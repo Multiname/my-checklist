@@ -178,6 +178,83 @@ def test_move_unknown_category_is_rejected(tmp_path):
         database.close()
 
 
+def test_delete_category_removes_it_and_keeps_positions_continuous(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home, work, rest = make_categories(database, "Дом", "Работа", "Отдых")
+
+        remaining = database.delete_category(home.id)
+
+        assert remaining == [
+            domain.Category(id=work.id, title="Работа", position=0),
+            domain.Category(id=rest.id, title="Отдых", position=1),
+        ]
+        assert database.list_categories() == remaining
+    finally:
+        database.close()
+
+
+def test_deleted_category_stays_deleted_after_reopen(tmp_path):
+    db_path = tmp_path / "app.db"
+    database = storage.open_storage(db_path)
+    home, work = make_categories(database, "Дом", "Работа")
+    database.delete_category(home.id)
+    database.close()
+
+    database = storage.open_storage(db_path)
+    try:
+        assert [
+            (category.title, category.position)
+            for category in database.list_categories()
+        ] == [("Работа", 0)]
+    finally:
+        database.close()
+
+
+def test_delete_category_removes_its_items(tmp_path):
+    """Пункты удалённой категории уходят каскадом (feature-storage.md)."""
+    db_path = tmp_path / "app.db"
+    database = storage.open_storage(db_path)
+    home, work = make_categories(database, "Дом", "Работа")
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            "INSERT INTO items (category_id, title, position) VALUES (?, ?, ?)",
+            (home.id, "Помыть посуду", 0),
+        )
+        connection.execute(
+            "INSERT INTO items (category_id, title, position) VALUES (?, ?, ?)",
+            (home.id, "Пропылесосить", 1),
+        )
+        connection.execute(
+            "INSERT INTO items (category_id, title, position) VALUES (?, ?, ?)",
+            (work.id, "Отчёт", 0),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    database.delete_category(home.id)
+
+    assert read_rows(db_path, "SELECT title FROM items ORDER BY position") == [
+        ("Отчёт",)
+    ]
+    database.close()
+
+
+def test_delete_unknown_category_is_rejected(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        make_categories(database, "Дом")
+
+        with pytest.raises(storage.StorageError):
+            database.delete_category(999)
+        assert [c.title for c in database.list_categories()] == ["Дом"]
+    finally:
+        database.close()
+
+
 def test_positions_are_normalized_on_load(tmp_path):
     db_path = tmp_path / "app.db"
     open_db(tmp_path).close()

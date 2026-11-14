@@ -134,6 +134,32 @@ class Storage:
             )
         return title
 
+    def delete_category(self, category_id: int) -> list[Category]:
+        """Удаляет категорию и возвращает оставшийся порядок категорий.
+
+        Пункты удалённой категории уходят каскадом (`ON DELETE CASCADE`),
+        отдельного удаления не нужно (см. docs/features/feature-storage.md).
+        Позиции оставшихся категорий материализуются заново, поэтому дыр
+        в порядке не остаётся; возвращённый список — источник истины для UI.
+        Неизвестный ``id`` — ``StorageError``, БД при этом не меняется.
+        """
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "DELETE FROM categories WHERE id = ?", (category_id,)
+            )
+            if cursor.rowcount == 0:
+                # Транзакция откатится: удалять было нечего.
+                raise StorageError(f"Категория {category_id} не найдена")
+            _materialize_category_positions(self._conn)
+            rows = self._conn.execute(
+                "SELECT id, title, position FROM categories "
+                "ORDER BY position ASC, id ASC"
+            ).fetchall()
+        return [
+            Category(id=row["id"], title=row["title"], position=row["position"])
+            for row in rows
+        ]
+
     def move_category(self, category_id: int, new_position: int) -> list[Category]:
         """Переставляет категорию и возвращает получившийся порядок категорий.
 
