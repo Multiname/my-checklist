@@ -48,9 +48,19 @@ CATEGORY_HINT_STYLE = ft.TextStyle(
 )
 # Нижний отступ списка: последняя категория не прячется под button_area.
 LIST_BOTTOM_PADDING = BUTTON_AREA_HEIGHT + BUTTON_AREA_MARGIN + LIST_PADDING
-# Прокси перетаскивания в ReorderableListView исчезает не сразу: ~250 мс идёт
-# анимация возврата на место. Столько ждёт сброс вида элемента после drop.
-REORDER_PROXY_SECONDS = 0.3
+# Вложенная тема списка: прокси перетаскивания ReorderableListView — это
+# Material, который рисует светлый прямоугольник на весь элемент (вместе с
+# промежутком до следующей категории) и тень вокруг него. Прозрачные фон, тень
+# и тонировка делают прокси невидимым: при перетаскивании видно только панель
+# категории, и её высота не меняется. На вид самих категорий тема не влияет —
+# панель красится явно заданным bgcolor, а роли цветовой схемы наследуются.
+LIST_THEME = ft.Theme(
+    canvas_color=ft.Colors.TRANSPARENT,
+    color_scheme=ft.ColorScheme(
+        shadow=ft.Colors.TRANSPARENT,
+        surface_tint=ft.Colors.TRANSPARENT,
+    ),
+)
 
 # Иконки лежат в src/assets/icons (assets_dir по умолчанию — "assets"
 # относительно main.py), поэтому пути указываются от каталога assets.
@@ -135,15 +145,14 @@ def create_category_item(panel: ft.Container) -> ft.Container:
     """Элемент списка: панель категории вместе с промежутком до следующей.
 
     Промежуток — внутренний отступ обёртки, а не `margin` панели, и не `spacing`
-    списка: `ReorderableListView` `spacing` не поддерживает, а прокси
-    перетаскивания рисует прямоугольник элемента целиком. На время
-    перетаскивания обёртка закрашивается цветом выделения (`_start_drag()`),
-    поэтому за панелью не видно белого фона прокси.
+    списка: `ReorderableListView` `spacing` не поддерживает. Прокси
+    перетаскивания рисует прямоугольник элемента целиком, но фон и тень прокси
+    прозрачные (см. `LIST_THEME`), поэтому промежуток в нём не виден, а высота
+    панели при перетаскивании не меняется.
     """
     return ft.Container(
         content=panel,
         padding=ft.Padding.only(bottom=CATEGORY_SPACING),
-        border_radius=CATEGORY_PANEL_RADIUS,
     )
 
 
@@ -174,14 +183,21 @@ def create_category_list() -> ft.ReorderableListView:
 
 def create_category_area(
     category_list: ft.ReorderableListView, on_tap
-) -> ft.GestureDetector:
+) -> ft.Container:
     """Область списка: тап по ней снимает выделение категории.
 
     Тап ловит обёртка списка, а не экран целиком: `button_area` лежит выше
     в `Stack`, поэтому тапы по кнопкам сюда не доходят. Прокрутка выделение
     не снимает — жест переходит к списку (drag побеждает в арене жестов).
+
+    Вложенная тема (`LIST_THEME`) нужна прокси перетаскивания: он лежит выше
+    списка в overlay, но наследует темы, захваченные у элемента, поэтому
+    прозрачные фон/тень/тонировка действуют и на него.
     """
-    return ft.GestureDetector(content=category_list, on_tap=on_tap)
+    return ft.Container(
+        theme=LIST_THEME,
+        content=ft.GestureDetector(content=category_list, on_tap=on_tap),
+    )
 
 
 def create_category_input(hint_text: str, on_commit) -> ft.TextField:
@@ -252,7 +268,6 @@ class ChecklistApp:
         self.category_list = create_category_list()
         self.category_list.on_reorder_start = self._on_reorder_start
         self.category_list.on_reorder = self._on_reorder
-        self.category_list.on_reorder_end = self._on_reorder_end
         self.category_area = create_category_area(self.category_list, self._on_tap)
         self.button_area = create_button_area(self.create_category)
         (
@@ -262,8 +277,6 @@ class ChecklistApp:
         ) = self.button_area.content.controls
         self._editing_view: CategoryView | None = None
         self._selected_view: CategoryView | None = None
-        # Категория, которую сейчас перетаскивают (см. _start_drag).
-        self._drag_view: CategoryView | None = None
         self._keyboard_open = False
         self._apply_selection()
 
@@ -354,42 +367,9 @@ class ChecklistApp:
         view = self._view_at(event.old_index)
         if view is None:
             return
-        self._start_drag(view)
         self._select_category(view)
         if self.haptic is not None:
             await self.haptic.medium_impact()
-
-    def _start_drag(self, view: CategoryView) -> None:
-        """Готовит категорию к перетаскиванию: за панелью не видно фона прокси.
-
-        Прокси перетаскивания — прямоугольник элемента целиком, включая
-        промежуток до следующей категории. Пока категория перетаскивается, этот
-        промежуток закрашен цветом выделения, поэтому видно только панель.
-        """
-        previous = self._drag_view
-        if previous is not None and previous is not view:
-            # Обычно вид уже сброшен в _on_reorder_end; страховка от утечки.
-            previous.item.bgcolor = None
-        self._drag_view = view
-        view.item.bgcolor = CATEGORY_PANEL_SELECTED_COLOR
-
-    def _on_reorder_end(self, event: ft.OnReorderEvent) -> None:
-        """Перетаскивание закончено: обёртка категории возвращается к обычному виду.
-
-        Прокси доигрывает анимацию возврата на место (~250 мс), поэтому цвет
-        сбрасывается с задержкой: иначе фон прокси на мгновение показался бы
-        из-под панели. Событие приходит и при перетаскивании без смены позиции.
-        """
-        view = self._drag_view
-        if view is None:
-            return
-        self._drag_view = None
-        self.page.run_task(self._finish_drag_visual, view)
-
-    async def _finish_drag_visual(self, view: CategoryView) -> None:
-        await asyncio.sleep(REORDER_PROXY_SECONDS)
-        view.item.bgcolor = None
-        self.page.update()
 
     async def _on_reorder(self, event: ft.OnReorderEvent) -> None:
         """Категорию отпустили на новом месте: новый порядок сохраняется в БД."""
