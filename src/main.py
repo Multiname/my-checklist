@@ -48,6 +48,9 @@ CATEGORY_HINT_STYLE = ft.TextStyle(
 )
 # Нижний отступ списка: последняя категория не прячется под button_area.
 LIST_BOTTOM_PADDING = BUTTON_AREA_HEIGHT + BUTTON_AREA_MARGIN + LIST_PADDING
+# Прокси перетаскивания в ReorderableListView исчезает не сразу: ~250 мс идёт
+# анимация возврата на место. Столько ждёт сброс вида элемента после drop.
+REORDER_PROXY_SECONDS = 0.3
 
 # Иконки лежат в src/assets/icons (assets_dir по умолчанию — "assets"
 # относительно main.py), поэтому пути указываются от каталога assets.
@@ -119,18 +122,28 @@ def create_category_title(title: str) -> ft.Text:
 
 
 def create_category_panel(title: str) -> ft.Container:
-    """Шаблон категории: название поверх прямоугольной панели.
-
-    Промежуток до следующей категории задан нижним отступом панели, а не
-    `spacing` списка: `ReorderableListView` (см. `create_category_list()`)
-    `spacing` не поддерживает — клиент его игнорирует.
-    """
+    """Шаблон категории: название поверх прямоугольной панели."""
     return ft.Container(
         bgcolor=CATEGORY_PANEL_COLOR,
         border_radius=CATEGORY_PANEL_RADIUS,
         padding=CATEGORY_PANEL_PADDING,
-        margin=ft.Margin.only(bottom=CATEGORY_SPACING),
         content=create_category_title(title),
+    )
+
+
+def create_category_item(panel: ft.Container) -> ft.Container:
+    """Элемент списка: панель категории вместе с промежутком до следующей.
+
+    Промежуток — внутренний отступ обёртки, а не `margin` панели, и не `spacing`
+    списка: `ReorderableListView` `spacing` не поддерживает, а прокси
+    перетаскивания рисует прямоугольник элемента целиком. На время
+    перетаскивания обёртка закрашивается цветом выделения (`_start_drag()`),
+    поэтому за панелью не видно белого фона прокси.
+    """
+    return ft.Container(
+        content=panel,
+        padding=ft.Padding.only(bottom=CATEGORY_SPACING),
+        border_radius=CATEGORY_PANEL_RADIUS,
     )
 
 
@@ -204,6 +217,7 @@ class CategoryView:
         self.title = category.title
         self.panel = create_category_panel(self.title)
         self.title_text: ft.Text = self.panel.content
+        self.item = create_category_item(self.panel)
         self.input: ft.TextField | None = None
         self.selected = False
 
@@ -238,6 +252,7 @@ class ChecklistApp:
         self.category_list = create_category_list()
         self.category_list.on_reorder_start = self._on_reorder_start
         self.category_list.on_reorder = self._on_reorder
+        self.category_list.on_reorder_end = self._on_reorder_end
         self.category_area = create_category_area(self.category_list, self._on_tap)
         self.button_area = create_button_area(self.create_category)
         (
@@ -247,6 +262,8 @@ class ChecklistApp:
         ) = self.button_area.content.controls
         self._editing_view: CategoryView | None = None
         self._selected_view: CategoryView | None = None
+        # Категория, которую сейчас перетаскивают (см. _start_drag).
+        self._drag_view: CategoryView | None = None
         self._keyboard_open = False
         self._apply_selection()
 
@@ -317,7 +334,7 @@ class ChecklistApp:
     def _append_category(self, category: domain.Category) -> CategoryView:
         view = CategoryView(category)
         self.views.append(view)
-        self.category_list.controls.append(view.panel)
+        self.category_list.controls.append(view.item)
         return view
 
     def _view_at(self, index: int | None) -> CategoryView | None:
@@ -331,11 +348,48 @@ class ChecklistApp:
 
         `on_reorder_start` приходит в момент, когда `ReorderableListView` уже
         начал drag (на Android — после долгого нажатия): палец отпускать и
-        нажимать ещё раз не нужно.
+        нажимать ещё раз не нужно. Виброотклик даётся на каждый drag, в том
+        числе повторный по уже выделенной категории: это новое перетаскивание.
         """
         view = self._view_at(event.old_index)
-        if view is not None:
-            await self._select_category(view)
+        if view is None:
+            return
+        self._start_drag(view)
+        self._select_category(view)
+        if self.haptic is not None:
+            await self.haptic.medium_impact()
+
+    def _start_drag(self, view: CategoryView) -> None:
+        """Готовит категорию к перетаскиванию: за панелью не видно фона прокси.
+
+        Прокси перетаскивания — прямоугольник элемента целиком, включая
+        промежуток до следующей категории. Пока категория перетаскивается, этот
+        промежуток закрашен цветом выделения, поэтому видно только панель.
+        """
+        previous = self._drag_view
+        if previous is not None and previous is not view:
+            # Обычно вид уже сброшен в _on_reorder_end; страховка от утечки.
+            previous.item.bgcolor = None
+        self._drag_view = view
+        view.item.bgcolor = CATEGORY_PANEL_SELECTED_COLOR
+
+    def _on_reorder_end(self, event: ft.OnReorderEvent) -> None:
+        """Перетаскивание закончено: обёртка категории возвращается к обычному виду.
+
+        Прокси доигрывает анимацию возврата на место (~250 мс), поэтому цвет
+        сбрасывается с задержкой: иначе фон прокси на мгновение показался бы
+        из-под панели. Событие приходит и при перетаскивании без смены позиции.
+        """
+        view = self._drag_view
+        if view is None:
+            return
+        self._drag_view = None
+        self.page.run_task(self._finish_drag_visual, view)
+
+    async def _finish_drag_visual(self, view: CategoryView) -> None:
+        await asyncio.sleep(REORDER_PROXY_SECONDS)
+        view.item.bgcolor = None
+        self.page.update()
 
     async def _on_reorder(self, event: ft.OnReorderEvent) -> None:
         """Категорию отпустили на новом месте: новый порядок сохраняется в БД."""
@@ -364,7 +418,7 @@ class ChecklistApp:
         new_index = max(0, min(new_index, len(self.views) - 1))
         view = self.views.pop(old_index)
         self.views.insert(new_index, view)
-        self.category_list.controls = [item.panel for item in self.views]
+        self.category_list.controls = [item.item for item in self.views]
 
     def _apply_category_order(self, ordered: list[domain.Category]) -> None:
         """Приводит список категорий в памяти к порядку, сохранённому в БД."""
@@ -376,20 +430,22 @@ class ChecklistApp:
             view = by_id.get(category.id)
             if view is not None:
                 view.category = category
-        self.category_list.controls = [item.panel for item in self.views]
+        self.category_list.controls = [item.item for item in self.views]
 
-    async def _select_category(self, view: CategoryView) -> None:
-        """Выделяет категорию: другой цвет панели, виброотклик, кнопки."""
-        if view is self._selected_view:
-            return
-        if self._selected_view is not None:
-            self._selected_view.set_selected(False)
-        self._selected_view = view
-        view.set_selected(True)
+    def _select_category(self, view: CategoryView) -> None:
+        """Выделяет категорию: другой цвет панели и состав кнопок.
+
+        Выделение применяется идемпотентно: повторный вызов для уже выделенной
+        категории всё равно отправляет изменения клиенту — начинающемуся
+        перетаскиванию нужен свежий вид элемента.
+        """
+        if view is not self._selected_view:
+            if self._selected_view is not None:
+                self._selected_view.set_selected(False)
+            self._selected_view = view
+            view.set_selected(True)
         self._apply_selection()
         self.page.update()
-        if self.haptic is not None:
-            await self.haptic.medium_impact()
 
     def _on_tap(self, event: ft.ControlEvent | None = None) -> None:
         """Тап по списку снимает выделение.

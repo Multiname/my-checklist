@@ -65,9 +65,18 @@ def test_category_panel_is_rectangular_with_title_on_top():
     assert panel.bgcolor == main.CATEGORY_PANEL_COLOR
     assert panel.border_radius == main.CATEGORY_PANEL_RADIUS
     assert panel.padding == main.CATEGORY_PANEL_PADDING
-    # Промежуток между категориями: нижний отступ панели (spacing списка
-    # ReorderableListView не поддерживает).
-    assert panel.margin == ft.Margin.only(bottom=main.CATEGORY_SPACING)
+
+
+def test_category_item_keeps_the_gap_inside_the_list_item():
+    """Промежуток — часть элемента списка: прокси при drag красит его сам."""
+    panel = main.create_category_panel("Работа")
+
+    item = main.create_category_item(panel)
+
+    assert item.content is panel
+    assert item.padding == ft.Padding.only(bottom=main.CATEGORY_SPACING)
+    assert item.border_radius == main.CATEGORY_PANEL_RADIUS
+    assert item.bgcolor is None
 
 
 def test_category_list_scrolls_full_screen_above_button_area():
@@ -239,6 +248,13 @@ def reorder(app, old_index, new_index):
     )
 
 
+def reorder_end(app, new_index=0):
+    """Событие ReorderableListView: палец отпущен, drag закончен."""
+    return ft.OnReorderEvent(
+        name="reorder_end", control=app.category_list, new_index=new_index
+    )
+
+
 def test_keyboard_close_commits_editing():
     page = FakePage()
     app = main.ChecklistApp(page, storage=None)
@@ -311,11 +327,13 @@ def test_buttons_stay_hidden_while_another_title_is_edited():
     assert app.button_area.visible is False
 
 
-def test_category_panels_are_list_items_themselves():
-    """Перетаскивание выполняет сам список: обёртки с on_long_press больше нет."""
+def test_category_items_are_list_items_with_panels_inside():
+    """Перетаскивание выполняет сам список: элементами служат обёртки категорий."""
     page, app, haptic, (home, work) = make_app("Дом", "Работа")
 
-    assert app.category_list.controls == [home.panel, work.panel]
+    assert app.category_list.controls == [home.item, work.item]
+    assert home.item.content is home.panel
+    assert work.item.content is work.panel
 
 
 def test_reorder_events_are_handled_by_the_list():
@@ -323,6 +341,7 @@ def test_reorder_events_are_handled_by_the_list():
 
     assert app.category_list.on_reorder_start == app._on_reorder_start
     assert app.category_list.on_reorder == app._on_reorder
+    assert app.category_list.on_reorder_end == app._on_reorder_end
 
 
 def test_list_tap_area_wraps_category_list():
@@ -348,9 +367,20 @@ def test_long_press_selects_category_with_haptic_and_color():
     assert page.views[0].can_pop is False
 
 
+def test_drag_start_colors_the_whole_list_item():
+    """Прокси перетаскивания рисует элемент целиком: он тоже должен быть розовым."""
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+
+    asyncio.run(app._on_reorder_start(reorder_start(app, 0)))
+
+    assert app._drag_view is home
+    assert home.item.bgcolor == main.CATEGORY_PANEL_SELECTED_COLOR
+    assert work.item.bgcolor is None
+
+
 def test_long_press_on_another_category_moves_selection():
     page, app, haptic, (home, work) = make_app("Дом", "Работа")
-    asyncio.run(app._select_category(home))
+    asyncio.run(app._on_reorder_start(reorder_start(app, 0)))
 
     asyncio.run(app._on_reorder_start(reorder_start(app, 1)))
 
@@ -358,17 +388,19 @@ def test_long_press_on_another_category_moves_selection():
     assert home.selected is False
     assert home.panel.bgcolor == main.CATEGORY_PANEL_COLOR
     assert work.panel.bgcolor == main.CATEGORY_PANEL_SELECTED_COLOR
-    assert len(haptic.calls) == 2
+    # Виброотклик даётся на каждый начатый drag.
+    assert haptic.calls == ["medium_impact", "medium_impact"]
 
 
-def test_repeated_long_press_keeps_single_selection():
+def test_repeated_long_press_keeps_single_selection_and_vibrates():
+    """Повторное долгое нажатие — это новое перетаскивание, отклик нужен снова."""
     page, app, haptic, (home,) = make_app("Дом")
 
     asyncio.run(app._on_reorder_start(reorder_start(app, 0)))
     asyncio.run(app._on_reorder_start(reorder_start(app, 0)))
 
     assert app._selected_view is home
-    assert haptic.calls == ["medium_impact"]
+    assert haptic.calls == ["medium_impact", "medium_impact"]
 
 
 def test_reorder_start_with_unknown_index_changes_nothing():
@@ -380,13 +412,41 @@ def test_reorder_start_with_unknown_index_changes_nothing():
     assert haptic.calls == []
 
 
+def test_reorder_end_restores_item_after_proxy_animation(monkeypatch):
+    monkeypatch.setattr(main, "REORDER_PROXY_SECONDS", 0)
+    page, app, haptic, (home,) = make_app("Дом")
+    asyncio.run(app._on_reorder_start(reorder_start(app, 0)))
+
+    app._on_reorder_end(reorder_end(app))
+    assert home.item.bgcolor == main.CATEGORY_PANEL_SELECTED_COLOR
+    assert page.tasks == [(app._finish_drag_visual, (home,))]
+
+    asyncio.run(app._finish_drag_visual(home))
+
+    assert home.item.bgcolor is None
+    # Выделение и кнопки переживают перетаскивание.
+    assert app._selected_view is home
+    assert app.rename_button.visible is True
+
+
+def test_new_drag_does_not_keep_previous_item_colored():
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    asyncio.run(app._on_reorder_start(reorder_start(app, 0)))
+
+    # Второй drag начали раньше, чем пришёл on_reorder_end первого.
+    asyncio.run(app._on_reorder_start(reorder_start(app, 1)))
+
+    assert home.item.bgcolor is None
+    assert work.item.bgcolor == main.CATEGORY_PANEL_SELECTED_COLOR
+
+
 def test_reorder_moves_category_and_saves_order():
     page, app, haptic, (home, work, rest) = make_app("Дом", "Работа", "Отдых")
 
     asyncio.run(app._on_reorder(reorder(app, 0, 2)))
 
     assert [view.title for view in app.views] == ["Работа", "Отдых", "Дом"]
-    assert app.category_list.controls == [view.panel for view in app.views]
+    assert app.category_list.controls == [view.item for view in app.views]
     assert app.storage.moved == [(home.category.id, 2)]
     # Позиции обновляются по порядку из БД.
     assert [(view.category.title, view.category.position) for view in app.views] == [
@@ -445,7 +505,7 @@ def test_selection_swaps_button_area_buttons():
     assert app.rename_button.visible is False
     assert app.delete_button.visible is False
 
-    asyncio.run(app._select_category(home))
+    app._select_category(home)
 
     assert app.create_button.visible is False
     assert app.rename_button.visible is True
@@ -460,7 +520,7 @@ def test_selection_swaps_button_area_buttons():
 
 def test_tap_on_list_deselects_category():
     page, app, haptic, (home, work) = make_app("Дом", "Работа")
-    asyncio.run(app._select_category(home))
+    app._select_category(home)
     page.updates = 0
 
     app.category_area.on_tap(None)
@@ -485,7 +545,7 @@ def test_tap_without_selection_changes_nothing():
 def test_tap_that_closes_keyboard_keeps_selection():
     """Тап, закрывающий клавиатуру при вводе названия, выделение не снимает."""
     page, app, haptic, (home, editing) = make_app("Дом", "Работа")
-    asyncio.run(app._select_category(home))
+    app._select_category(home)
     app._begin_title_input(editing)
 
     app.category_area.on_tap(None)
@@ -496,7 +556,7 @@ def test_tap_that_closes_keyboard_keeps_selection():
 
 def test_back_with_selection_deselects_without_closing_app():
     page, app, haptic, (home,) = make_app("Дом")
-    asyncio.run(app._select_category(home))
+    app._select_category(home)
 
     asyncio.run(app._on_confirm_pop(None))
 
