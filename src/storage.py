@@ -134,6 +134,40 @@ class Storage:
             )
         return title
 
+    def move_category(self, category_id: int, new_position: int) -> list[Category]:
+        """Переставляет категорию и возвращает получившийся порядок категорий.
+
+        ``new_position`` — позиция в списке после удаления перемещаемой
+        категории (так её присылает `ReorderableListView`); значение вне
+        диапазона подрезается к ``0..n-1``. Позиции после перемещения
+        материализуются заново, как и после любой изменяющей операции
+        (см. docs/features/feature-storage.md).
+        """
+        with self._lock, self._conn:
+            rows = self._conn.execute(
+                "SELECT id FROM categories ORDER BY position ASC, id ASC"
+            ).fetchall()
+            ids = [row["id"] for row in rows]
+            if category_id not in ids:
+                raise StorageError(f"Категория {category_id} не найдена")
+            ids.remove(category_id)
+            target = max(0, min(new_position, len(ids)))
+            ids.insert(target, category_id)
+            for position, moved_id in enumerate(ids):
+                self._conn.execute(
+                    "UPDATE categories SET position = ? WHERE id = ?",
+                    (position, moved_id),
+                )
+            _materialize_category_positions(self._conn)
+            rows = self._conn.execute(
+                "SELECT id, title, position FROM categories "
+                "ORDER BY position ASC, id ASC"
+            ).fetchall()
+        return [
+            Category(id=row["id"], title=row["title"], position=row["position"])
+            for row in rows
+        ]
+
 
 def open_storage(db_path: Path | str | None = None) -> Storage:
     """Открывает (при первом запуске — создаёт) БД приложения.

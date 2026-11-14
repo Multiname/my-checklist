@@ -5,6 +5,7 @@ import flet as ft
 
 import domain
 import main
+import storage
 
 
 def test_app_module_is_importable():
@@ -64,11 +65,15 @@ def test_category_panel_is_rectangular_with_title_on_top():
     assert panel.bgcolor == main.CATEGORY_PANEL_COLOR
     assert panel.border_radius == main.CATEGORY_PANEL_RADIUS
     assert panel.padding == main.CATEGORY_PANEL_PADDING
+    # Промежуток между категориями: нижний отступ панели (spacing списка
+    # ReorderableListView не поддерживает).
+    assert panel.margin == ft.Margin.only(bottom=main.CATEGORY_SPACING)
 
 
 def test_category_list_scrolls_full_screen_above_button_area():
     category_list = main.create_category_list()
 
+    assert isinstance(category_list, ft.ReorderableListView)
     assert category_list.expand is True
     # Список строится целиком: иначе scroll_to() после создания не работает.
     assert category_list.build_controls_on_demand is False
@@ -145,6 +150,7 @@ class FakePage:
         self.views = [FakeView()]
         self.services = []
         self.controls = []
+        self.messages = []
 
     def run_task(self, handler, *args):
         self.tasks.append((handler, args))
@@ -155,6 +161,9 @@ class FakePage:
     def add(self, *controls):
         self.controls.extend(controls)
         self.update()
+
+    def show_dialog(self, dialog):
+        self.messages.append(dialog.content.value)
 
 
 class FakeHaptic:
@@ -168,14 +177,31 @@ class FakeHaptic:
 class FakeStorage:
     def __init__(self):
         self.saved = []
+        self.moved = []
+        self.categories = []
+        self.fail_move = False
         self.recovered_backup = None
 
     def list_categories(self):
-        return []
+        return list(self.categories)
 
     def set_category_title(self, category_id, title):
         self.saved.append((category_id, title))
         return title
+
+    def move_category(self, category_id, new_position):
+        """Повторяет правила настоящего хранилища: подрезка позиции и порядок."""
+        self.moved.append((category_id, new_position))
+        if self.fail_move:
+            raise storage.StorageError("нет места")
+        ids = [item.id for item in self.categories]
+        moved = self.categories.pop(ids.index(category_id))
+        new_position = max(0, min(new_position, len(self.categories)))
+        self.categories.insert(new_position, moved)
+        return [
+            domain.Category(id=item.id, title=item.title, position=position)
+            for position, item in enumerate(self.categories)
+        ]
 
 
 def category(category_id, title):
@@ -186,12 +212,31 @@ def make_app(*titles):
     """Приложение с категориями из titles, без страницы: только состояние."""
     page = FakePage()
     haptic = FakeHaptic()
-    app = main.ChecklistApp(page, storage=FakeStorage(), haptic=haptic)
+    storage = FakeStorage()
+    app = main.ChecklistApp(page, storage=storage, haptic=haptic)
     views = [
         app._append_category(category(index + 1, title))
         for index, title in enumerate(titles)
     ]
+    storage.categories = [view.category for view in views]
     return page, app, haptic, views
+
+
+def reorder_start(app, index):
+    """Событие ReorderableListView: долгое нажатие начало перетаскивание."""
+    return ft.OnReorderEvent(
+        name="reorder_start", control=app.category_list, old_index=index
+    )
+
+
+def reorder(app, old_index, new_index):
+    """Событие ReorderableListView: категорию отпустили на новом месте."""
+    return ft.OnReorderEvent(
+        name="reorder",
+        control=app.category_list,
+        old_index=old_index,
+        new_index=new_index,
+    )
 
 
 def test_keyboard_close_commits_editing():
@@ -266,14 +311,18 @@ def test_buttons_stay_hidden_while_another_title_is_edited():
     assert app.button_area.visible is False
 
 
-def test_category_item_wraps_whole_panel_with_long_press():
-    page, app, haptic, (home,) = make_app("Дом")
+def test_category_panels_are_list_items_themselves():
+    """Перетаскивание выполняет сам список: обёртки с on_long_press больше нет."""
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
 
-    item = app.category_list.controls[0]
+    assert app.category_list.controls == [home.panel, work.panel]
 
-    assert isinstance(item, ft.GestureDetector)
-    assert item.content is home.panel
-    assert callable(item.on_long_press)
+
+def test_reorder_events_are_handled_by_the_list():
+    page, app, haptic, views = make_app()
+
+    assert app.category_list.on_reorder_start == app._on_reorder_start
+    assert app.category_list.on_reorder == app._on_reorder
 
 
 def test_list_tap_area_wraps_category_list():
@@ -286,7 +335,8 @@ def test_list_tap_area_wraps_category_list():
 def test_long_press_selects_category_with_haptic_and_color():
     page, app, haptic, (home, work) = make_app("Дом", "Работа")
 
-    asyncio.run(app.category_list.controls[0].on_long_press(None))
+    # Долгое нажатие сразу начинает drag: выделение приходит от списка.
+    asyncio.run(app._on_reorder_start(reorder_start(app, 0)))
 
     assert app._selected_view is home
     assert home.selected is True
@@ -302,7 +352,7 @@ def test_long_press_on_another_category_moves_selection():
     page, app, haptic, (home, work) = make_app("Дом", "Работа")
     asyncio.run(app._select_category(home))
 
-    asyncio.run(app.category_list.controls[1].on_long_press(None))
+    asyncio.run(app._on_reorder_start(reorder_start(app, 1)))
 
     assert app._selected_view is work
     assert home.selected is False
@@ -314,11 +364,77 @@ def test_long_press_on_another_category_moves_selection():
 def test_repeated_long_press_keeps_single_selection():
     page, app, haptic, (home,) = make_app("Дом")
 
-    asyncio.run(app._select_category(home))
-    asyncio.run(app._select_category(home))
+    asyncio.run(app._on_reorder_start(reorder_start(app, 0)))
+    asyncio.run(app._on_reorder_start(reorder_start(app, 0)))
 
     assert app._selected_view is home
     assert haptic.calls == ["medium_impact"]
+
+
+def test_reorder_start_with_unknown_index_changes_nothing():
+    page, app, haptic, (home,) = make_app("Дом")
+
+    asyncio.run(app._on_reorder_start(reorder_start(app, 5)))
+
+    assert app._selected_view is None
+    assert haptic.calls == []
+
+
+def test_reorder_moves_category_and_saves_order():
+    page, app, haptic, (home, work, rest) = make_app("Дом", "Работа", "Отдых")
+
+    asyncio.run(app._on_reorder(reorder(app, 0, 2)))
+
+    assert [view.title for view in app.views] == ["Работа", "Отдых", "Дом"]
+    assert app.category_list.controls == [view.panel for view in app.views]
+    assert app.storage.moved == [(home.category.id, 2)]
+    # Позиции обновляются по порядку из БД.
+    assert [(view.category.title, view.category.position) for view in app.views] == [
+        ("Работа", 0),
+        ("Отдых", 1),
+        ("Дом", 2),
+    ]
+
+
+def test_reorder_updates_the_order_in_place_after_drop():
+    page, app, haptic, (home, work, rest) = make_app("Дом", "Работа", "Отдых")
+    asyncio.run(app._on_reorder_start(reorder_start(app, 1)))
+
+    asyncio.run(app._on_reorder(reorder(app, 1, 0)))
+
+    # Выделение переживает перетаскивание.
+    assert app._selected_view is work
+    assert [view.title for view in app.views] == ["Работа", "Дом", "Отдых"]
+    assert app.storage.moved == [(work.category.id, 0)]
+
+
+def test_reorder_to_the_same_position_does_not_touch_storage():
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+
+    asyncio.run(app._on_reorder(reorder(app, 0, 0)))
+
+    assert app.storage.moved == []
+    assert [view.title for view in app.views] == ["Дом", "Работа"]
+
+
+def test_reorder_with_unknown_index_does_not_touch_storage():
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+
+    asyncio.run(app._on_reorder(reorder(app, 5, 0)))
+
+    assert app.storage.moved == []
+    assert [view.title for view in app.views] == ["Дом", "Работа"]
+
+
+def test_reorder_write_error_keeps_list_and_reports():
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    app.storage.fail_move = True
+
+    asyncio.run(app._on_reorder(reorder(app, 0, 1)))
+
+    # Экран уже показывает новый порядок — список в памяти повторяет его.
+    assert [view.title for view in app.views] == ["Работа", "Дом"]
+    assert page.messages == ["Не удалось сохранить порядок категорий"]
 
 
 def test_selection_swaps_button_area_buttons():

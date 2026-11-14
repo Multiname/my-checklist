@@ -119,31 +119,32 @@ def create_category_title(title: str) -> ft.Text:
 
 
 def create_category_panel(title: str) -> ft.Container:
-    """Шаблон категории: название поверх прямоугольной панели."""
+    """Шаблон категории: название поверх прямоугольной панели.
+
+    Промежуток до следующей категории задан нижним отступом панели, а не
+    `spacing` списка: `ReorderableListView` (см. `create_category_list()`)
+    `spacing` не поддерживает — клиент его игнорирует.
+    """
     return ft.Container(
         bgcolor=CATEGORY_PANEL_COLOR,
         border_radius=CATEGORY_PANEL_RADIUS,
         padding=CATEGORY_PANEL_PADDING,
+        margin=ft.Margin.only(bottom=CATEGORY_SPACING),
         content=create_category_title(title),
     )
 
 
-def create_category_item(panel: ft.Container, on_long_press) -> ft.GestureDetector:
-    """Область категории в списке: долгое нажатие по всей панели.
+def create_category_list() -> ft.ReorderableListView:
+    """Список категорий на весь экран: прокручивается, категории переставляются.
 
-    Долгое нажатие обрабатывает обёртка, а не сама панель: `Container`
-    с `on_long_press` строит `GestureDetector` с поведением `deferToChild`
-    и теряет нажатия по отступам панели (там нет текста). `GestureDetector`
-    Flet попадание не ограничивает — срабатывает по всей площади.
+    Перетаскивание выполняет сам `ReorderableListView`: на Android он
+    оборачивает каждый элемент в `ReorderableDelayedDragStartListener`, поэтому
+    drag начинается сразу после долгого нажатия — отпускать палец не нужно.
+    Выделение по началу drag и сохранение нового порядка делает
+    `ChecklistApp` (`on_reorder_start` и `on_reorder`).
     """
-    return ft.GestureDetector(content=panel, on_long_press=on_long_press)
-
-
-def create_category_list() -> ft.ListView:
-    """Список категорий на весь экран: прокручивается, не уходит под кнопки."""
-    return ft.ListView(
+    return ft.ReorderableListView(
         expand=True,
-        spacing=CATEGORY_SPACING,
         padding=ft.Padding.only(
             left=LIST_PADDING,
             right=LIST_PADDING,
@@ -158,7 +159,9 @@ def create_category_list() -> ft.ListView:
     )
 
 
-def create_category_area(category_list: ft.ListView, on_tap) -> ft.GestureDetector:
+def create_category_area(
+    category_list: ft.ReorderableListView, on_tap
+) -> ft.GestureDetector:
     """Область списка: тап по ней снимает выделение категории.
 
     Тап ловит обёртка списка, а не экран целиком: `button_area` лежит выше
@@ -202,7 +205,6 @@ class CategoryView:
         self.panel = create_category_panel(self.title)
         self.title_text: ft.Text = self.panel.content
         self.input: ft.TextField | None = None
-        self.item: ft.GestureDetector | None = None
         self.selected = False
 
     @property
@@ -230,8 +232,12 @@ class ChecklistApp:
         self.storage = storage
         # Сервис виброотклика: если не передан, создаётся в mount().
         self.haptic = haptic
-        self.views: dict[int, CategoryView] = {}
+        # Категории в порядке списка: индекс в нём совпадает с индексом
+        # элемента в списке и с индексом в событиях перетаскивания.
+        self.views: list[CategoryView] = []
         self.category_list = create_category_list()
+        self.category_list.on_reorder_start = self._on_reorder_start
+        self.category_list.on_reorder = self._on_reorder
         self.category_area = create_category_area(self.category_list, self._on_tap)
         self.button_area = create_button_area(self.create_category)
         (
@@ -310,16 +316,67 @@ class ChecklistApp:
 
     def _append_category(self, category: domain.Category) -> CategoryView:
         view = CategoryView(category)
-        self.views[category.id] = view
-        view.item = create_category_item(view.panel, self._long_press_handler(view))
-        self.category_list.controls.append(view.item)
+        self.views.append(view)
+        self.category_list.controls.append(view.panel)
         return view
 
-    def _long_press_handler(self, view: CategoryView):
-        async def handle_long_press(event: ft.ControlEvent) -> None:
+    def _view_at(self, index: int | None) -> CategoryView | None:
+        """Категория по индексу из события списка; None — если такого нет."""
+        if index is None or not 0 <= index < len(self.views):
+            return None
+        return self.views[index]
+
+    async def _on_reorder_start(self, event: ft.OnReorderEvent) -> None:
+        """Долгое нажатие по категории: выделение и сразу перетаскивание.
+
+        `on_reorder_start` приходит в момент, когда `ReorderableListView` уже
+        начал drag (на Android — после долгого нажатия): палец отпускать и
+        нажимать ещё раз не нужно.
+        """
+        view = self._view_at(event.old_index)
+        if view is not None:
             await self._select_category(view)
 
-        return handle_long_press
+    async def _on_reorder(self, event: ft.OnReorderEvent) -> None:
+        """Категорию отпустили на новом месте: новый порядок сохраняется в БД."""
+        old_index, new_index = event.old_index, event.new_index
+        view = self._view_at(old_index)
+        if view is None or new_index is None or old_index == new_index:
+            return
+        # Экран уже показывает новый порядок: элемент переставил сам список.
+        # Список в памяти повторяет его, иначе любое следующее обновление
+        # вернуло бы прежний порядок.
+        self._move_view(old_index, new_index)
+        try:
+            ordered = await asyncio.to_thread(
+                self.storage.move_category, view.category.id, new_index
+            )
+        except Exception:
+            logger.exception("Не удалось сохранить порядок категорий")
+            self._show_message("Не удалось сохранить порядок категорий")
+            return
+        # Порядок из БД — источник истины: им же обновляются позиции категорий.
+        self._apply_category_order(ordered)
+        self.page.update()
+
+    def _move_view(self, old_index: int, new_index: int) -> None:
+        """Переставляет категорию в списке в памяти и в списке элементов."""
+        new_index = max(0, min(new_index, len(self.views) - 1))
+        view = self.views.pop(old_index)
+        self.views.insert(new_index, view)
+        self.category_list.controls = [item.panel for item in self.views]
+
+    def _apply_category_order(self, ordered: list[domain.Category]) -> None:
+        """Приводит список категорий в памяти к порядку, сохранённому в БД."""
+        by_id = {item.category.id: item for item in self.views}
+        self.views = [
+            by_id[category.id] for category in ordered if category.id in by_id
+        ]
+        for category in ordered:
+            view = by_id.get(category.id)
+            if view is not None:
+                view.category = category
+        self.category_list.controls = [item.panel for item in self.views]
 
     async def _select_category(self, view: CategoryView) -> None:
         """Выделяет категорию: другой цвет панели, виброотклик, кнопки."""

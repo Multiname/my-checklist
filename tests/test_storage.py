@@ -94,6 +94,90 @@ def test_set_category_title_saves_and_survives_reopen(tmp_path):
         database.close()
 
 
+def make_categories(database: storage.Storage, *titles: str) -> list[domain.Category]:
+    return [database.create_category(title) for title in titles]
+
+
+def test_move_category_down_keeps_order_and_positions(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home, work, rest = make_categories(database, "Дом", "Работа", "Отдых")
+
+        ordered = database.move_category(home.id, 2)
+
+        assert ordered == [
+            domain.Category(id=work.id, title="Работа", position=0),
+            domain.Category(id=rest.id, title="Отдых", position=1),
+            domain.Category(id=home.id, title="Дом", position=2),
+        ]
+        assert database.list_categories() == ordered
+    finally:
+        database.close()
+
+
+def test_move_category_up_keeps_order_and_positions(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home, work, rest = make_categories(database, "Дом", "Работа", "Отдых")
+
+        ordered = database.move_category(rest.id, 0)
+
+        assert [category.title for category in ordered] == [
+            "Отдых",
+            "Дом",
+            "Работа",
+        ]
+        assert [category.position for category in ordered] == [0, 1, 2]
+    finally:
+        database.close()
+
+
+def test_move_category_clamps_position_to_list_bounds(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home, work = make_categories(database, "Дом", "Работа")
+
+        assert [c.title for c in database.move_category(home.id, 99)] == [
+            "Работа",
+            "Дом",
+        ]
+        assert [c.title for c in database.move_category(home.id, -5)] == [
+            "Дом",
+            "Работа",
+        ]
+    finally:
+        database.close()
+
+
+def test_moved_order_survives_reopen(tmp_path):
+    db_path = tmp_path / "app.db"
+    database = storage.open_storage(db_path)
+    home, work, rest = make_categories(database, "Дом", "Работа", "Отдых")
+    database.move_category(home.id, 2)
+    database.close()
+
+    database = storage.open_storage(db_path)
+    try:
+        assert [
+            (category.title, category.position)
+            for category in database.list_categories()
+        ] == [("Работа", 0), ("Отдых", 1), ("Дом", 2)]
+    finally:
+        database.close()
+
+
+def test_move_unknown_category_is_rejected(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        make_categories(database, "Дом")
+
+        with pytest.raises(storage.StorageError):
+            database.move_category(999, 0)
+        assert [c.title for c in database.list_categories()] == ["Дом"]
+    finally:
+        database.close()
+
+
 def test_positions_are_normalized_on_load(tmp_path):
     db_path = tmp_path / "app.db"
     open_db(tmp_path).close()
