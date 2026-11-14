@@ -266,6 +266,13 @@ def reorder(app, old_index, new_index):
     )
 
 
+def reorder_end(app, new_index=0):
+    """Событие ReorderableListView: палец отпущен, drag закончен."""
+    return ft.OnReorderEvent(
+        name="reorder_end", control=app.category_list, new_index=new_index
+    )
+
+
 def test_keyboard_close_commits_editing():
     page = FakePage()
     app = main.ChecklistApp(page, storage=None)
@@ -352,6 +359,50 @@ def test_reorder_events_are_handled_by_the_list():
 
     assert app.category_list.on_reorder_start == app._on_reorder_start
     assert app.category_list.on_reorder == app._on_reorder
+    assert app.category_list.on_reorder_end == app._on_reorder_end
+
+
+def test_drag_hides_button_area_and_returns_it():
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    app._select_category(work)
+    assert app.button_area.visible is True
+
+    asyncio.run(app._on_reorder_start(reorder_start(app, 0)))
+
+    # Пока категорию перетаскивают, кнопок не видно.
+    assert app._dragging is True
+    assert app.button_area.visible is False
+
+    app._on_reorder_end(reorder_end(app))
+
+    assert app._dragging is False
+    assert app.button_area.visible is True
+    # Выделение пережило drag: видны кнопки выделенной категории.
+    assert app._selected_view is home
+    assert app.rename_button.visible is True
+    assert app.create_button.visible is False
+
+
+def test_drag_with_new_order_restores_button_area():
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    asyncio.run(app._on_reorder_start(reorder_start(app, 0)))
+
+    app._on_reorder_end(reorder_end(app))
+    asyncio.run(app._on_reorder(reorder(app, 0, 1)))
+
+    assert app.button_area.visible is True
+    assert [view.title for view in app.views] == ["Работа", "Дом"]
+
+
+def test_tap_after_interrupted_drag_returns_button_area():
+    """Если система прервала жест, on_reorder_end не придёт — кнопки вернёт тап."""
+    page, app, haptic, (home,) = make_app("Дом")
+    asyncio.run(app._on_reorder_start(reorder_start(app, 0)))
+
+    app.category_area.content.on_tap(None)
+
+    assert app._dragging is False
+    assert app.button_area.visible is True
 
 
 def test_list_tap_area_wraps_category_list():

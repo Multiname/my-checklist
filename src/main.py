@@ -268,6 +268,7 @@ class ChecklistApp:
         self.category_list = create_category_list()
         self.category_list.on_reorder_start = self._on_reorder_start
         self.category_list.on_reorder = self._on_reorder
+        self.category_list.on_reorder_end = self._on_reorder_end
         self.category_area = create_category_area(self.category_list, self._on_tap)
         self.button_area = create_button_area(self.create_category)
         (
@@ -277,6 +278,8 @@ class ChecklistApp:
         ) = self.button_area.content.controls
         self._editing_view: CategoryView | None = None
         self._selected_view: CategoryView | None = None
+        # Идёт перетаскивание категории: кнопки button_area скрыты целиком.
+        self._dragging = False
         self._keyboard_open = False
         self._apply_selection()
 
@@ -367,9 +370,28 @@ class ChecklistApp:
         view = self._view_at(event.old_index)
         if view is None:
             return
+        # Пока категория перетаскивается, кнопки скрыты целиком:
+        # _apply_selection() внутри _select_category() отправляет это клиенту.
+        self._dragging = True
         self._select_category(view)
         if self.haptic is not None:
             await self.haptic.medium_impact()
+
+    def _on_reorder_end(self, event: ft.OnReorderEvent) -> None:
+        """Перетаскивание закончено: кнопки button_area возвращаются.
+
+        Событие приходит и при перетаскивании без смены позиции — тогда
+        `on_reorder` не приходит, и без него кнопки остались бы скрытыми.
+        """
+        self._end_drag()
+
+    def _end_drag(self) -> None:
+        """Снимает состояние перетаскивания и возвращает кнопки button_area."""
+        if not self._dragging:
+            return
+        self._dragging = False
+        self._apply_selection()
+        self.page.update()
 
     async def _on_reorder(self, event: ft.OnReorderEvent) -> None:
         """Категорию отпустили на новом месте: новый порядок сохраняется в БД."""
@@ -434,6 +456,9 @@ class ChecklistApp:
         вместе с завершением ввода названия, а выделение должно пережить
         закрытие клавиатуры.
         """
+        # Тап возможен только когда перетаскивания уже нет. Если система
+        # прервала жест, не прислав on_reorder_end, кнопки остались бы скрытыми.
+        self._end_drag()
         if self._editing_view is not None:
             return
         self._deselect()
@@ -453,8 +478,9 @@ class ChecklistApp:
         self.create_button.visible = not selected
         self.rename_button.visible = selected
         self.delete_button.visible = selected
-        # Пока идёт ввод, контейнер скрыт целиком (см. feature-button-area.md).
-        self.button_area.visible = self._editing_view is None
+        # Пока идёт ввод названия или перетаскивание категории, контейнер
+        # скрыт целиком (см. feature-button-area.md).
+        self.button_area.visible = self._editing_view is None and not self._dragging
         # Пока категория выделена, «назад» перехватывается и снимает
         # выделение вместо закрытия приложения.
         self.page.views[0].can_pop = not selected
