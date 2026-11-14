@@ -83,7 +83,7 @@ def test_button_icons_exist_in_assets():
 
 
 def test_category_panel_is_rectangular_with_title_on_top():
-    panel = main.create_category_panel("Работа")
+    panel = main.create_category_panel(main.create_category_title("Работа"))
 
     assert isinstance(panel, ft.Container)
     assert panel.content.value == "Работа"
@@ -233,13 +233,22 @@ class FakeStorage:
         self.moved = []
         self.deleted = []
         self.categories = []
+        self.created_items = []
+        self.item_titles = []
+        self.items = []
         self.fail_move = False
         self.fail_save = False
         self.fail_delete = False
+        self.fail_create_item = False
+        self.fail_item_title = False
         self.recovered_backup = None
+        self._next_item_id = 1
 
     def list_categories(self):
         return list(self.categories)
+
+    def list_items(self):
+        return list(self.items)
 
     def set_category_title(self, category_id, title):
         self.saved.append((category_id, title))
@@ -272,6 +281,28 @@ class FakeStorage:
             domain.Category(id=item.id, title=item.title, position=position)
             for position, item in enumerate(self.categories)
         ]
+
+    def create_item(self, category_id, title=domain.DEFAULT_ITEM_TITLE):
+        """Повторяет правила настоящего хранилища: конец категории и отметка 0."""
+        self.created_items.append((category_id, title))
+        if self.fail_create_item:
+            raise storage.StorageError("нет места")
+        item = domain.Item(
+            id=self._next_item_id,
+            category_id=category_id,
+            title=title,
+            is_checked=False,
+            position=sum(1 for item in self.items if item.category_id == category_id),
+        )
+        self._next_item_id += 1
+        self.items.append(item)
+        return item
+
+    def set_item_title(self, item_id, title):
+        self.item_titles.append((item_id, title))
+        if self.fail_item_title:
+            raise storage.StorageError("нет места")
+        return title
 
 
 def category(category_id, title):
@@ -348,8 +379,12 @@ def test_category_view_starts_with_title_text():
 
     assert view.title == "Дом"
     assert view.title_text.value == "Дом"
-    assert view.panel.content is view.title_text
+    assert view.title_slot.content is view.title_text
     assert view.is_editing is False
+    # Панель: название сверху, под ним — контейнер пунктов.
+    title_slot, items_box = view.panel.content.controls
+    assert title_slot is view.title_slot
+    assert items_box is view.items_box
 
 
 def test_buttons_hide_while_editing_title():
@@ -579,8 +614,7 @@ def test_selection_swaps_button_actions():
     # Выделена категория: плюс добавляет пункт, карандаш и корзина — категорию.
     assert app.plus_button.visible is True
     assert app.plus_button.content.semantics_label == main.LABEL_ADD_ITEM
-    # Обработчик добавления пункта появится на задаче 2 этапа 3.
-    assert app.plus_button.on_click == main._no_op
+    assert app.plus_button.on_click == app.add_item
     assert app.pencil_button.visible is True
     assert app.pencil_button.on_click == app.rename_category
     assert app.trash_button.visible is True
@@ -765,7 +799,7 @@ def test_rename_opens_input_with_previous_title(monkeypatch):
 
     # Название заменено полем ввода, в поле — прежнее название.
     assert app._editing_view is work
-    assert work.input is work.panel.content
+    assert work.input is work.title_slot.content
     assert work.input.value == "Работа"
     assert focused == [work.input]
     # Во время ввода кнопки скрыты, «назад» не закрывает приложение.
@@ -781,7 +815,7 @@ def test_rename_without_selection_does_nothing(monkeypatch):
     asyncio.run(app.rename_category(None))
 
     assert app._editing_view is None
-    assert home.panel.content is home.title_text
+    assert home.title_slot.content is home.title_text
     assert focused == []
 
 
@@ -808,7 +842,7 @@ def test_rename_saves_title_and_keeps_selection():
 
     assert home.title == "Квартира"
     assert home.title_text.value == "Квартира"
-    assert home.panel.content is home.title_text
+    assert home.title_slot.content is home.title_text
     assert app.storage.saved == [(home.category.id, "Квартира")]
     # Выделение пережило переименование: слоты остались прежними.
     assert app._selected_view is home
@@ -856,7 +890,7 @@ def test_rename_write_error_keeps_previous_title_and_reports():
     # Коммит до UI: при ошибке панель показывает прежнее название.
     assert home.title == "Дом"
     assert home.title_text.value == "Дом"
-    assert home.panel.content is home.title_text
+    assert home.title_slot.content is home.title_text
     assert page.messages == ["Не удалось сохранить название"]
     assert app._selected_view is home
 
@@ -1059,5 +1093,296 @@ def test_delete_category_after_edit_does_not_write_deleted_title():
 
     assert app.storage.saved == []
     assert app.views == [work]
+
+
+def item(item_id, category_id, title, is_checked=False, position=0):
+    return domain.Item(
+        id=item_id,
+        category_id=category_id,
+        title=title,
+        is_checked=is_checked,
+        position=position,
+    )
+
+
+def test_item_panel_has_checkbox_on_the_left_and_transparent_background():
+    checkbox = ft.Checkbox()
+    title = main.create_item_title("Помыть посуду")
+
+    panel = main.create_item_panel(checkbox, title)
+
+    assert isinstance(panel, ft.Container)
+    # Фон прозрачный: сквозь пункт видна панель категории.
+    assert panel.bgcolor == main.ITEM_PANEL_COLOR == ft.Colors.TRANSPARENT
+    assert panel.content.controls[0] is checkbox
+    assert panel.content.controls[1] is title
+    assert panel.content.vertical_alignment == ft.CrossAxisAlignment.CENTER
+
+
+def test_item_text_is_smaller_than_category_title():
+    item_title = main.create_item_title("Пункт")
+
+    assert item_title.style == main.ITEM_TITLE_STYLE
+    assert item_title.max_lines == 2
+    assert main.ITEM_TITLE_SIZE < main.CATEGORY_TITLE_SIZE
+    assert main.ITEM_TITLE_WEIGHT == ft.FontWeight.NORMAL
+
+
+def test_empty_category_has_hidden_items_box():
+    view = main.CategoryView(category(1, "Дом"))
+
+    assert view.items == []
+    assert view.items_box.visible is False
+    assert view.items_box.content.controls == []
+
+
+def test_category_view_keeps_items_inside_its_items_box():
+    view = main.CategoryView(
+        category(1, "Дом"),
+        [item(1, 1, "Помыть посуду"), item(2, 1, "Пропылесосить", position=1)],
+    )
+
+    assert [item_view.title for item_view in view.items] == [
+        "Помыть посуду",
+        "Пропылесосить",
+    ]
+    assert view.items_box.visible is True
+    assert view.items_box.content.controls == [
+        item_view.panel for item_view in view.items
+    ]
+    first = view.items[0]
+    assert first.checkbox.value is False
+    assert first.panel.content.controls[0] is first.checkbox
+    assert first.title_slot.content is first.title_text
+
+
+def test_item_checkbox_shows_mark_saved_in_storage():
+    view = main.CategoryView(
+        category(1, "Дом"), [item(1, 1, "Отчёт", is_checked=True)]
+    )
+
+    assert view.items[0].checkbox.value is True
+
+
+def test_add_item_appends_to_selected_category_and_opens_input(monkeypatch):
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    app._select_category(home)
+    focused = fake_focus(monkeypatch)
+
+    asyncio.run(app.add_item(None))
+
+    # Пункт создан в БД и добавлен в конец списка выделенной категории.
+    assert app.storage.created_items == [
+        (home.category.id, domain.DEFAULT_ITEM_TITLE)
+    ]
+    assert [view.title for view in home.items] == ["Пункт"]
+    assert home.items_box.visible is True
+    assert home.items_box.content.controls == [home.items[0].panel]
+    assert work.items == []
+    # На месте названия пункта — поле ввода с подсказкой «Пункт».
+    item_view = home.items[0]
+    assert app._editing_view is item_view
+    assert item_view.input is item_view.title_slot.content
+    assert item_view.input.value == ""
+    assert item_view.input.hint_text == domain.DEFAULT_ITEM_TITLE
+    assert item_view.input.autofocus is True
+    assert focused == [item_view.input]
+    # Пока идёт ввод, кнопки скрыты, «назад» не закрывает приложение.
+    assert app.button_area.visible is False
+    assert page.views[0].can_pop is False
+
+
+def test_add_item_goes_to_the_end_of_the_category(monkeypatch):
+    page, app, haptic, (home,) = make_app("Дом")
+    home.append_item(item(1, 1, "Первый"))
+    home.append_item(item(2, 1, "Второй", position=1))
+    app.storage.items = [item(1, 1, "Первый"), item(2, 1, "Второй", position=1)]
+    app._select_category(home)
+    fake_focus(monkeypatch)
+
+    asyncio.run(app.add_item(None))
+
+    assert [view.title for view in home.items] == ["Первый", "Второй", "Пункт"]
+    assert home.items_box.content.controls[-1] is home.items[-1].panel
+
+
+def test_add_item_saves_entered_title_and_restores_buttons(monkeypatch):
+    page, app, haptic, (home,) = make_app("Дом")
+    app._select_category(home)
+    fake_focus(monkeypatch)
+    asyncio.run(app.add_item(None))
+    item_view = home.items[0]
+
+    item_view.input.value = "  Купить хлеб  "
+    asyncio.run(app._finish_title_input(item_view))
+
+    assert item_view.title == "Купить хлеб"
+    assert item_view.title_text.value == "Купить хлеб"
+    assert item_view.title_slot.content is item_view.title_text
+    assert app.storage.item_titles == [(item_view.item.id, "Купить хлеб")]
+    # Выделение категории пережило создание пункта: слоты остались прежними.
+    assert app._selected_view is home
+    assert app.button_area.visible is True
+    assert app.plus_button.on_click == app.add_item
+    assert app.pencil_button.visible is True
+    assert app.trash_button.visible is True
+    assert page.views[0].can_pop is False
+
+
+def test_add_item_without_title_keeps_default_name(monkeypatch):
+    page, app, haptic, (home,) = make_app("Дом")
+    app._select_category(home)
+    fake_focus(monkeypatch)
+    asyncio.run(app.add_item(None))
+    item_view = home.items[0]
+
+    asyncio.run(app._finish_title_input(item_view))
+
+    # Пункт уже создан с названием «Пункт»: пустой ввод ничего не меняет.
+    assert app.storage.created_items == [(home.category.id, "Пункт")]
+    assert app.storage.item_titles == []
+    assert item_view.title == "Пункт"
+    assert item_view.title_slot.content is item_view.title_text
+
+
+def test_add_item_requires_selected_category(monkeypatch):
+    page, app, haptic, (home,) = make_app("Дом")
+    focused = fake_focus(monkeypatch)
+
+    asyncio.run(app.add_item(None))
+
+    assert app.storage.created_items == []
+    assert home.items == []
+    assert focused == []
+
+
+def test_add_item_is_ignored_while_a_title_is_edited(monkeypatch):
+    page, app, haptic, (home,) = make_app("Дом")
+    app._select_category(home)
+    app._begin_title_input(home, home.title)
+    focused = fake_focus(monkeypatch)
+
+    asyncio.run(app.add_item(None))
+
+    assert app.storage.created_items == []
+    assert home.items == []
+    assert focused == []
+
+
+def test_add_item_write_error_adds_nothing_and_reports(monkeypatch):
+    page, app, haptic, (home,) = make_app("Дом")
+    app._select_category(home)
+    app.storage.fail_create_item = True
+    focused = fake_focus(monkeypatch)
+
+    asyncio.run(app.add_item(None))
+
+    # Коммит до UI: при ошибке нового пункта нет, поле не открывается.
+    assert home.items == []
+    assert home.items_box.visible is False
+    assert app._editing_view is None
+    assert app.button_area.visible is True
+    assert page.messages == ["Не удалось добавить пункт"]
+    assert focused == []
+
+
+def test_item_title_write_error_keeps_default_and_reports(monkeypatch):
+    page, app, haptic, (home,) = make_app("Дом")
+    app._select_category(home)
+    app.storage.fail_item_title = True
+    fake_focus(monkeypatch)
+    asyncio.run(app.add_item(None))
+    item_view = home.items[0]
+    item_view.input.value = "Купить хлеб"
+
+    asyncio.run(app._finish_title_input(item_view))
+
+    assert item_view.title == "Пункт"
+    assert item_view.title_text.value == "Пункт"
+    assert item_view.title_slot.content is item_view.title_text
+    assert page.messages == ["Не удалось сохранить название"]
+    assert app._selected_view is home
+
+
+def test_tap_outside_item_input_saves_title_and_keeps_category_selection(
+    monkeypatch,
+):
+    page, app, haptic, (home,) = make_app("Дом")
+    app._select_category(home)
+    fake_focus(monkeypatch)
+    asyncio.run(app.add_item(None))
+    item_view = home.items[0]
+    field = item_view.input
+    field.value = "Купить хлеб"
+
+    asyncio.run(field.on_tap_outside(None))
+
+    assert item_view.title == "Купить хлеб"
+    assert app._selected_view is home
+    assert app._tap_ended_input is True
+
+
+def test_back_while_item_input_saves_title_and_keeps_selection(monkeypatch):
+    page, app, haptic, (home,) = make_app("Дом")
+    app._select_category(home)
+    fake_focus(monkeypatch)
+    asyncio.run(app.add_item(None))
+    item_view = home.items[0]
+    item_view.input.value = "Купить хлеб"
+
+    asyncio.run(app._on_confirm_pop(None))
+
+    assert item_view.title == "Купить хлеб"
+    assert app.storage.item_titles == [(item_view.item.id, "Купить хлеб")]
+    assert app._selected_view is home
+    assert page.views[0].pops == [False]
+
+
+def test_item_input_uses_item_text_style():
+    item_input = main.create_item_input("Пункт", lambda event: None)
+    item_title = main.create_item_title("Пункт")
+
+    assert item_input.text_style == item_title.style == main.ITEM_TITLE_STYLE
+    assert item_input.hint_style.size == main.ITEM_TITLE_SIZE
+    assert item_input.hint_style.height == main.ITEM_TITLE_LINE_HEIGHT
+    assert item_input.dense is True
+    assert item_input.autofocus is True
+
+
+def test_items_are_restored_from_storage_on_mount():
+    page = FakePage()
+    storage = FakeStorage()
+    storage.categories = [category(1, "Дом"), category(2, "Работа")]
+    storage.items = [
+        item(1, 1, "Помыть посуду"),
+        item(2, 1, "Пропылесосить", position=1),
+        item(3, 2, "Отчёт", is_checked=True),
+    ]
+    app = main.ChecklistApp(page, storage=storage, haptic=FakeHaptic())
+
+    asyncio.run(app.mount())
+
+    home, work = app.views
+    assert [view.title for view in home.items] == ["Помыть посуду", "Пропылесосить"]
+    assert [view.title for view in work.items] == ["Отчёт"]
+    assert work.items[0].checkbox.value is True
+    assert home.items_box.content.controls == [view.panel for view in home.items]
+    assert home.items_box.visible is True
+
+
+def test_delete_category_drops_item_input_state(monkeypatch):
+    """Удаление категории убирает и ввод названия её пункта."""
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    app._select_category(home)
+    fake_focus(monkeypatch)
+    asyncio.run(app.add_item(None))
+
+    asyncio.run(app.delete_category(None))
+
+    assert app.storage.deleted == [home.category.id]
+    assert app._editing_view is None
+    assert app.views == [work]
+    assert app.button_area.visible is True
+    assert page.views[0].can_pop is True
 
 

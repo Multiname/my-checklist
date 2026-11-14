@@ -48,6 +48,30 @@ CATEGORY_HINT_STYLE = ft.TextStyle(
     height=CATEGORY_TITLE_LINE_HEIGHT,
     color=ft.Colors.ON_SURFACE_VARIANT,
 )
+
+# Параметры пункта — см. docs/Design.md. Текст пункта мельче текста категории,
+# а межстрочная высота задана явно по той же причине, что и у категории:
+# Text и TextField должны занимать одинаковую высоту, иначе строка «прыгает».
+ITEM_TITLE_SIZE = 16
+ITEM_TITLE_WEIGHT = ft.FontWeight.NORMAL
+ITEM_TITLE_LINE_HEIGHT = 1.45
+ITEM_TITLE_STYLE = ft.TextStyle(
+    size=ITEM_TITLE_SIZE,
+    weight=ITEM_TITLE_WEIGHT,
+    height=ITEM_TITLE_LINE_HEIGHT,
+)
+ITEM_HINT_STYLE = ft.TextStyle(
+    size=ITEM_TITLE_SIZE,
+    weight=ITEM_TITLE_WEIGHT,
+    height=ITEM_TITLE_LINE_HEIGHT,
+    color=ft.Colors.ON_SURFACE_VARIANT,
+)
+# Фон пункта прозрачный: пункт лежит внутри панели категории, и сквозь него
+# видна панель, в том числе когда категория выделена.
+ITEM_PANEL_COLOR = ft.Colors.TRANSPARENT
+# Отступ от названия категории до первого пункта и промежуток между пунктами.
+CATEGORY_ITEMS_TOP = 8
+ITEM_SPACING = 4
 # Нижний отступ списка: последняя категория не прячется под button_area.
 LIST_BOTTOM_PADDING = BUTTON_AREA_HEIGHT + BUTTON_AREA_MARGIN + LIST_PADDING
 # Вложенная тема списка: прокси перетаскивания ReorderableListView — это
@@ -181,13 +205,56 @@ def create_category_title(title: str) -> ft.Text:
     )
 
 
-def create_category_panel(title: str) -> ft.Container:
-    """Шаблон категории: название поверх прямоугольной панели."""
+def create_item_title(title: str) -> ft.Text:
+    """Название пункта: мельче названия категории, как и текст пунктов."""
+    return ft.Text(
+        value=title,
+        style=ITEM_TITLE_STYLE,
+        max_lines=2,
+        overflow=ft.TextOverflow.ELLIPSIS,
+    )
+
+
+def create_items_box() -> ft.Container:
+    """Контейнер пунктов внутри панели категории.
+
+    Пока пунктов нет, контейнер скрыт и не занимает места: панель категории
+    выглядит и измеряется как до появления пунктов. Отступ от названия задан
+    внутренним padding контейнера, а не `spacing` колонки панели: скрытый
+    контейнер не добавляет высоты, а `spacing` колонки добавил бы её и для
+    пустого контейнера.
+    """
+    return ft.Container(
+        visible=False,
+        padding=ft.Padding.only(top=CATEGORY_ITEMS_TOP),
+        content=ft.Column(spacing=ITEM_SPACING, tight=True),
+    )
+
+
+def create_item_panel(checkbox: ft.Checkbox, title: ft.Control) -> ft.Container:
+    """Шаблон пункта: чекбокс слева, название справа, фон прозрачный."""
+    return ft.Container(
+        bgcolor=ITEM_PANEL_COLOR,
+        content=ft.Row(
+            controls=[checkbox, title],
+            spacing=0,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+    )
+
+
+def create_category_content(title: ft.Control, items: ft.Control) -> ft.Column:
+    """Содержимое панели категории: название, под ним — контейнер пунктов."""
+    return ft.Column(controls=[title, items], spacing=0, tight=True)
+
+
+def create_category_panel(content: ft.Control) -> ft.Container:
+    """Шаблон категории: прямоугольная панель вокруг названия и пунктов."""
     return ft.Container(
         bgcolor=CATEGORY_PANEL_COLOR,
         border_radius=CATEGORY_PANEL_RADIUS,
         padding=CATEGORY_PANEL_PADDING,
-        content=create_category_title(title),
+        content=content,
     )
 
 
@@ -255,10 +322,16 @@ def create_category_area(
     )
 
 
-def create_category_input(
-    hint_text: str, on_commit, value: str = "", on_tap_outside=None
+def create_title_input(
+    *,
+    hint_text: str,
+    text_style: ft.TextStyle,
+    hint_style: ft.TextStyle,
+    on_commit,
+    value: str = "",
+    on_tap_outside=None,
 ) -> ft.TextField:
-    """Поле ввода названия на месте названия категории.
+    """Поле ввода названия на месте названия категории или пункта.
 
     Клавиатура появляется за счёт autofocus; ввод завершается кнопкой действия
     клавиатуры, тапом вне поля, потерей фокуса и скрытием клавиатуры
@@ -270,10 +343,10 @@ def create_category_input(
     return ft.TextField(
         value=value,
         hint_text=hint_text,
-        hint_style=CATEGORY_HINT_STYLE,
-        text_style=CATEGORY_TITLE_STYLE,
-        # Поле выглядит как название категории, а не как форма. dense убирает
-        # минимальную высоту Material-поля, чтобы панель не становилась выше.
+        hint_style=hint_style,
+        text_style=text_style,
+        # Поле выглядит как название, а не как форма. dense убирает
+        # минимальную высоту Material-поля, чтобы строка не становилась выше.
         border=ft.NoInputBorder(),
         content_padding=0,
         dense=True,
@@ -286,21 +359,118 @@ def create_category_input(
     )
 
 
-class CategoryView:
-    """Категория на экране: панель с названием, выделение и ввод названия."""
+def create_category_input(
+    hint_text: str, on_commit, value: str = "", on_tap_outside=None
+) -> ft.TextField:
+    """Поле ввода названия категории: стиль названия категории."""
+    return create_title_input(
+        hint_text=hint_text,
+        text_style=CATEGORY_TITLE_STYLE,
+        hint_style=CATEGORY_HINT_STYLE,
+        on_commit=on_commit,
+        value=value,
+        on_tap_outside=on_tap_outside,
+    )
 
-    def __init__(self, category: domain.Category) -> None:
-        self.category = category
-        self.title = category.title
-        self.panel = create_category_panel(self.title)
-        self.title_text: ft.Text = self.panel.content
-        self.item = create_category_item(self.panel)
+
+def create_item_input(
+    hint_text: str, on_commit, value: str = "", on_tap_outside=None
+) -> ft.TextField:
+    """Поле ввода названия пункта: стиль названия пункта."""
+    return create_title_input(
+        hint_text=hint_text,
+        text_style=ITEM_TITLE_STYLE,
+        hint_style=ITEM_HINT_STYLE,
+        on_commit=on_commit,
+        value=value,
+        on_tap_outside=on_tap_outside,
+    )
+
+
+class TitledView:
+    """Общая часть категории и пункта: название и ввод нового названия.
+
+    Ввод устроен одинаково: поле занимает место названия (`title_slot`), а
+    после завершения на его место возвращается текст. Различаются только
+    стиль текста, подсказка и операция хранилища.
+    """
+
+    default_title: str
+
+    def __init__(self, title: str) -> None:
+        self.title = title
         self.input: ft.TextField | None = None
-        self.selected = False
+        self.title_text = self.create_title_text(title)
+        self.title_slot = ft.Container(content=self.title_text)
 
     @property
     def is_editing(self) -> bool:
         return self.input is not None
+
+    def show_input(self, field: ft.TextField) -> None:
+        """Ставит поле ввода на место названия."""
+        self.input = field
+        self.title_slot.content = field
+
+    def show_title(self) -> None:
+        """Возвращает текст названия на место поля ввода."""
+        self.input = None
+        self.title_text.value = self.title
+        self.title_slot.content = self.title_text
+
+    # Реализуют подклассы: категория и пункт отличаются стилем и хранилищем.
+    def create_title_text(self, title: str) -> ft.Text:
+        raise NotImplementedError
+
+    def create_input(
+        self, *, on_commit, value: str = "", on_tap_outside=None
+    ) -> ft.TextField:
+        raise NotImplementedError
+
+    def save_title(self, storage: Storage, title: str) -> str:
+        raise NotImplementedError
+
+
+class CategoryView(TitledView):
+    """Категория на экране: панель с названием, пункты, выделение и ввод."""
+
+    default_title = domain.DEFAULT_CATEGORY_TITLE
+
+    def __init__(
+        self, category: domain.Category, items: Sequence[domain.Item] = ()
+    ) -> None:
+        super().__init__(category.title)
+        self.category = category
+        self.items: list[ItemView] = []
+        self.items_box = create_items_box()
+        self.panel = create_category_panel(
+            create_category_content(self.title_slot, self.items_box)
+        )
+        self.item = create_category_item(self.panel)
+        self.selected = False
+        for item in items:
+            self.append_item(item)
+
+    def create_title_text(self, title: str) -> ft.Text:
+        return create_category_title(title)
+
+    def create_input(
+        self, *, on_commit, value: str = "", on_tap_outside=None
+    ) -> ft.TextField:
+        return create_category_input(
+            self.default_title, on_commit, value, on_tap_outside
+        )
+
+    def save_title(self, storage: Storage, title: str) -> str:
+        return storage.set_category_title(self.category.id, title)
+
+    def append_item(self, item: domain.Item) -> "ItemView":
+        """Добавляет пункт в конец контейнера пунктов категории."""
+        view = ItemView(item)
+        self.items.append(view)
+        self.items_box.content.controls.append(view.panel)
+        self.items_box.visible = True
+        return view
 
     def set_selected(self, selected: bool) -> None:
         """Выделенная категория отличается от остальных цветом панели."""
@@ -308,6 +478,37 @@ class CategoryView:
         self.panel.bgcolor = (
             CATEGORY_PANEL_SELECTED_COLOR if selected else CATEGORY_PANEL_COLOR
         )
+
+
+class ItemView(TitledView):
+    """Пункт на экране: чекбокс слева, название справа.
+
+    Пункт лежит внутри панели категории, поэтому его фон прозрачный: сквозь
+    него видна панель, в том числе когда категория выделена. Отметка
+    показывается чекбоксом из БД; переключение отметки — задача 8 этапа 3.
+    """
+
+    default_title = domain.DEFAULT_ITEM_TITLE
+
+    def __init__(self, item: domain.Item) -> None:
+        super().__init__(item.title)
+        self.item = item
+        # Название занимает всё место справа от чекбокса и переносится
+        # на вторую строку внутри этой ширины.
+        self.title_slot.expand = True
+        self.checkbox = ft.Checkbox(value=item.is_checked)
+        self.panel = create_item_panel(self.checkbox, self.title_slot)
+
+    def create_title_text(self, title: str) -> ft.Text:
+        return create_item_title(title)
+
+    def create_input(
+        self, *, on_commit, value: str = "", on_tap_outside=None
+    ) -> ft.TextField:
+        return create_item_input(self.default_title, on_commit, value, on_tap_outside)
+
+    def save_title(self, storage: Storage, title: str) -> str:
+        return storage.set_item_title(self.item.id, title)
 
 
 class ChecklistApp:
@@ -333,7 +534,7 @@ class ChecklistApp:
         self.category_area = create_category_area(
             self.category_list, self._on_tap, self._on_tap_cancel
         )
-        self._editing_view: CategoryView | None = None
+        self._editing_view: TitledView | None = None
         self._selected_view: CategoryView | None = None
         # Идёт перетаскивание категории: кнопки button_area скрыты целиком.
         self._dragging = False
@@ -350,9 +551,14 @@ class ChecklistApp:
         self._apply_selection()
 
     async def mount(self) -> None:
-        """Загружает категории из БД и собирает экран."""
-        for category in await asyncio.to_thread(self.storage.list_categories):
-            self._append_category(category)
+        """Загружает категории и пункты из БД и собирает экран."""
+        categories = await asyncio.to_thread(self.storage.list_categories)
+        items = await asyncio.to_thread(self.storage.list_items)
+        items_by_category: dict[int, list[domain.Item]] = {}
+        for item in items:
+            items_by_category.setdefault(item.category_id, []).append(item)
+        for category in categories:
+            self._append_category(category, items_by_category.get(category.id, ()))
         if self.haptic is None:
             self.haptic = ft.HapticFeedback()
             self.page.services.append(self.haptic)
@@ -413,6 +619,30 @@ class ChecklistApp:
         view = self._append_category(category)
         await self._start_title_input(view, scroll_to_end=True)
 
+    async def add_item(self, event: ft.ControlEvent | None = None) -> None:
+        """add_item: пункт в конец выделенной категории, затем ввод названия.
+
+        Запись в БД — до обновления экрана: при ошибке новый пункт не
+        появляется и показывается сообщение. Поле ввода открывается сразу
+        после создания пункта, с пустым значением и подсказкой «Пункт»:
+        не введённое название остаётся дефолтным. Поля в фокусе Flutter сам
+        показывает на экране, поэтому список к новому пункту прокручивается
+        без явного scroll_to: категория не обязательно последняя.
+        """
+        view = self._selected_view
+        if view is None or self._editing_view is not None:
+            # Кнопка показана только при выделенной категории; ввод названия
+            # скрывает button_area целиком, повторный вызов невозможен.
+            return
+        try:
+            item = await asyncio.to_thread(self.storage.create_item, view.category.id)
+        except Exception:
+            logger.exception("Не удалось добавить пункт")
+            self._show_message("Не удалось добавить пункт")
+            return
+        item_view = view.append_item(item)
+        await self._start_title_input(item_view)
+
     async def rename_category(
         self, event: ft.ControlEvent | None = None
     ) -> None:
@@ -443,11 +673,13 @@ class ChecklistApp:
         if view is None:
             # Кнопка показана только при выделенной категории.
             return
-        if self._editing_view is view:
+        editing = self._editing_view
+        if editing is not None and (editing is view or editing in view.items):
             # Ввод названия скрывает button_area целиком, так что сюда не
-            # попадают; если состояние всё же такое, поле уходит вместе с
-            # панелью, а не остаётся фокусом у несуществующей категории.
-            view.input = None
+            # попадают; если состояние всё же такое, поле уходит вместе
+            # с панелью, а не остаётся фокусом у несуществующей категории
+            # или её пункта.
+            editing.input = None
             self._editing_view = None
             self._keyboard_open = False
         try:
@@ -464,8 +696,10 @@ class ChecklistApp:
         self._apply_selection()
         self.page.update()
 
-    def _append_category(self, category: domain.Category) -> CategoryView:
-        view = CategoryView(category)
+    def _append_category(
+        self, category: domain.Category, items: Sequence[domain.Item] = ()
+    ) -> CategoryView:
+        view = CategoryView(category, items)
         self.views.append(view)
         self.category_list.controls.append(view.item)
         return view
@@ -620,16 +854,15 @@ class ChecklistApp:
         каждого слота, а не набор кнопок (см. docs/Project.md).
 
         Без выделения виден только плюс — создание категории. При выделенной
-        категории плюс добавляет пункт (обработчик появится на задаче 2 этапа
-        3), а карандаш и корзина работают с этой категорией. Выделение пункта
-        (задача 3 этапа 3) добавит третью строку таблицы: плюс снова создаёт
-        категорию — категория в этот момент не выделена
-        (см. docs/features/feature-button-area.md), а карандаш и корзина
-        работают с пунктом.
+        категории плюс добавляет пункт, а карандаш и корзина работают с этой
+        категорией. Выделение пункта (задача 3 этапа 3) добавит третью строку
+        таблицы: плюс снова создаёт категорию — категория в этот момент не
+        выделена (см. docs/features/feature-button-area.md), а карандаш и
+        корзина работают с пунктом.
         """
         if self._selected_view is not None:
             return (
-                ButtonAction(LABEL_ADD_ITEM),
+                ButtonAction(LABEL_ADD_ITEM, self.add_item),
                 ButtonAction(LABEL_RENAME_CATEGORY, self.rename_category),
                 ButtonAction(LABEL_DELETE_CATEGORY, self.delete_category),
             )
@@ -678,7 +911,7 @@ class ChecklistApp:
 
     async def _start_title_input(
         self,
-        view: CategoryView,
+        view: TitledView,
         initial: str | None = None,
         scroll_to_end: bool = False,
     ) -> None:
@@ -686,9 +919,9 @@ class ChecklistApp:
 
         ``initial`` — прежнее название: при переименовании поле заполнено им.
         ``scroll_to_end`` — для новой категории: она добавлена в конец, и её
-        надо доскроллить, чтобы поле было видно. Переименовываемая категория
-        уже на экране (её выделяли), а поле в фокусе Flutter сам показывает
-        на экране.
+        надо доскроллить, чтобы поле было видно. Новый пункт может быть и не
+        последним на экране, поэтому для него прокрутку делает сам Flutter:
+        поле в фокусе он показывает на экране.
         """
         field = self._begin_title_input(view, initial)
         if scroll_to_end:
@@ -696,17 +929,15 @@ class ChecklistApp:
         await field.focus()
 
     def _begin_title_input(
-        self, view: CategoryView, initial: str | None = None
+        self, view: TitledView, initial: str | None = None
     ) -> ft.TextField:
-        """Переводит категорию в режим ввода и скрывает кнопки button_area."""
-        field = create_category_input(
-            hint_text=domain.DEFAULT_CATEGORY_TITLE,
+        """Переводит название в режим ввода и скрывает кнопки button_area."""
+        field = view.create_input(
             value=initial or "",
             on_commit=self._title_commit_handler(view),
             on_tap_outside=self._title_tap_outside_handler(view),
         )
-        view.input = field
-        view.panel.content = field
+        view.show_input(field)
         self._editing_view = view
         self._tap_ended_input = False
         # Пока идёт ввод, кнопки скрыты: клавиатура иначе поднимала бы их
@@ -719,13 +950,13 @@ class ChecklistApp:
         self.page.update()
         return field
 
-    def _title_commit_handler(self, view: CategoryView):
+    def _title_commit_handler(self, view: TitledView):
         async def commit(event: ft.ControlEvent) -> None:
             await self._finish_title_input(view)
 
         return commit
 
-    def _title_tap_outside_handler(self, view: CategoryView):
+    def _title_tap_outside_handler(self, view: TitledView):
         """Тап вне поля: завершает ввод и помечает, что тап уже обработан.
 
         `on_tap_outside` приходит на нажатие, а `on_tap` списка — на отпускание,
@@ -742,8 +973,13 @@ class ChecklistApp:
 
         return tap_outside
 
-    async def _finish_title_input(self, view: CategoryView) -> None:
-        """Сохраняет введённое название и возвращает на панель текст."""
+    async def _finish_title_input(self, view: TitledView) -> None:
+        """Сохраняет введённое название и возвращает на место поля текст.
+
+        Название категории и название пункта вводятся одинаково; различаются
+        только дефолт (``view.default_title``) и операция хранилища
+        (``view.save_title``).
+        """
         field = view.input
         if field is None:
             # on_blur приходит после on_submit/on_tap_outside — второй раз не пишем.
@@ -751,22 +987,19 @@ class ChecklistApp:
         view.input = None
         if self._editing_view is view:
             self._editing_view = None
-        new_title = domain.normalize_title(
-            field.value, domain.DEFAULT_CATEGORY_TITLE
-        )
+        new_title = domain.normalize_title(field.value, view.default_title)
         if new_title != view.title:
             try:
                 # Коммит в БД — до обновления UI: при ошибке экран не меняется.
                 new_title = await asyncio.to_thread(
-                    self.storage.set_category_title, view.category.id, new_title
+                    view.save_title, self.storage, new_title
                 )
             except Exception:
-                logger.exception("Не удалось сохранить название категории")
+                logger.exception("Не удалось сохранить название")
                 self._show_message("Не удалось сохранить название")
             else:
                 view.title = new_title
-        view.title_text.value = view.title
-        view.panel.content = view.title_text
+        view.show_title()
         if self._editing_view is None:
             # Ввод завершён — кнопки возвращаются в правый нижний угол.
             self._apply_selection()

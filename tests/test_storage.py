@@ -322,3 +322,146 @@ def test_default_db_path_falls_back_to_working_directory(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     assert storage.default_db_path() == tmp_path / storage.DB_FILENAME
+
+
+def test_create_item_appends_to_the_category_and_starts_unchecked(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+
+        first = database.create_item(home.id, "Помыть посуду")
+        second = database.create_item(home.id)
+
+        assert first == domain.Item(
+            id=first.id,
+            category_id=home.id,
+            title="Помыть посуду",
+            is_checked=False,
+            position=0,
+        )
+        assert (second.title, second.position) == ("Пункт", 1)
+        assert database.list_items() == [first, second]
+    finally:
+        database.close()
+
+
+def test_create_item_normalizes_title(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+
+        assert database.create_item(home.id, "  Помыть  ").title == "Помыть"
+        assert database.create_item(home.id, "   ").title == "Пункт"
+    finally:
+        database.close()
+
+
+def test_create_item_in_unknown_category_is_rejected(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        with pytest.raises(storage.StorageError):
+            database.create_item(999)
+        assert database.list_items() == []
+    finally:
+        database.close()
+
+
+def test_created_items_survive_reopen(tmp_path):
+    db_path = tmp_path / "app.db"
+    database = storage.open_storage(db_path)
+    home = database.create_category("Дом")
+    first = database.create_item(home.id, "Помыть посуду")
+    second = database.create_item(home.id, "Пропылесосить")
+    database.close()
+
+    database = storage.open_storage(db_path)
+    try:
+        assert database.list_items() == [first, second]
+    finally:
+        database.close()
+
+
+def test_list_items_orders_by_category_order_and_position(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+        work = database.create_category("Работа")
+        home_first = database.create_item(home.id, "Посуда")
+        work_first = database.create_item(work.id, "Отчёт")
+        home_second = database.create_item(home.id, "Пылесос")
+
+        assert database.list_items() == [home_first, home_second, work_first]
+
+        # Пункты идут в порядке категорий: после перестановки категорий
+        # меняется и порядок пунктов, не теряя порядка внутри категории.
+        database.move_category(work.id, 0)
+        assert database.list_items() == [work_first, home_first, home_second]
+    finally:
+        database.close()
+
+
+def test_set_item_title_saves_and_survives_reopen(tmp_path):
+    db_path = tmp_path / "app.db"
+    database = storage.open_storage(db_path)
+    home = database.create_category("Дом")
+    created = database.create_item(home.id)
+
+    saved = database.set_item_title(created.id, "  Купить хлеб ")
+    database.close()
+    assert saved == "Купить хлеб"
+
+    database = storage.open_storage(db_path)
+    try:
+        assert database.list_items() == [
+            domain.Item(
+                id=created.id,
+                category_id=home.id,
+                title="Купить хлеб",
+                is_checked=False,
+                position=0,
+            )
+        ]
+    finally:
+        database.close()
+
+
+def test_item_positions_are_normalized_on_load(tmp_path):
+    db_path = tmp_path / "app.db"
+    database = storage.open_storage(db_path)
+    home = database.create_category("Дом")
+    database.close()
+
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute(
+            "INSERT INTO items (category_id, title, position) "
+            "VALUES (?, 'Первая', 5), (?, 'Вторая', 5)",
+            (home.id, home.id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    database = storage.open_storage(db_path)
+    try:
+        assert [(item.title, item.position) for item in database.list_items()] == [
+            ("Первая", 0),
+            ("Вторая", 1),
+        ]
+    finally:
+        database.close()
+
+
+def test_item_positions_are_per_category(tmp_path):
+    """Позиция пункта считается внутри своей категории, а не по всей таблице."""
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+        work = database.create_category("Работа")
+
+        home_first = database.create_item(home.id, "Посуда")
+        work_first = database.create_item(work.id, "Отчёт")
+
+        assert (home_first.position, work_first.position) == (0, 0)
+    finally:
+        database.close()

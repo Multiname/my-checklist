@@ -14,7 +14,13 @@ import threading
 import time
 from pathlib import Path
 
-from domain import DEFAULT_CATEGORY_TITLE, Category, normalize_title
+from domain import (
+    DEFAULT_CATEGORY_TITLE,
+    DEFAULT_ITEM_TITLE,
+    Category,
+    Item,
+    normalize_title,
+)
 
 DB_FILENAME = "app.db"
 SCHEMA_VERSION = 1
@@ -82,7 +88,7 @@ def default_db_path() -> Path:
 
 
 class Storage:
-    """Категории в SQLite. Одна пользовательская операция — одна транзакция."""
+    """Категории и пункты в SQLite. Одна пользовательская операция — одна транзакция."""
 
     def __init__(
         self, connection: sqlite3.Connection, *, recovered_backup: Path | None = None
@@ -194,6 +200,70 @@ class Storage:
             for row in rows
         ]
 
+    def list_items(self) -> list[Item]:
+        """Все пункты в порядке категорий и позиций внутри каждой категории.
+
+        Один запрос с JOIN, без N+1 (см. docs/features/feature-storage.md):
+        JOIN нужен только ради порядка — пункты идут в том же порядке
+        категорий, что и на экране, а внутри категории — по ``position``.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT i.id, i.category_id, i.title, i.is_checked, i.position "
+                "FROM items AS i JOIN categories AS c ON c.id = i.category_id "
+                "ORDER BY c.position ASC, i.position ASC, i.id ASC"
+            ).fetchall()
+        return [_item_from_row(row) for row in rows]
+
+    def create_item(
+        self, category_id: int, title: str = DEFAULT_ITEM_TITLE
+    ) -> Item:
+        """Добавляет пункт в конец категории и возвращает его.
+
+        Пункт без категории не существует (``category_id`` NOT NULL), поэтому
+        неизвестный ``category_id`` — ``StorageError``, а БД не меняется
+        (транзакция откатывается). Отметка при создании снята —
+        ``is_checked = 0`` (см. docs/features/feature-item.md).
+        """
+        title = normalize_title(title, DEFAULT_ITEM_TITLE)
+        with self._lock, self._conn:
+            known = self._conn.execute(
+                "SELECT 1 FROM categories WHERE id = ?", (category_id,)
+            ).fetchone()
+            if known is None:
+                raise StorageError(f"Категория {category_id} не найдена")
+            (next_position,) = self._conn.execute(
+                "SELECT COALESCE(MAX(position) + 1, 0) FROM items "
+                "WHERE category_id = ?",
+                (category_id,),
+            ).fetchone()
+            cursor = self._conn.execute(
+                "INSERT INTO items (category_id, title, is_checked, position) "
+                "VALUES (?, ?, 0, ?)",
+                (category_id, title, next_position),
+            )
+            item_id = int(cursor.lastrowid or 0)
+            _materialize_item_positions(self._conn, category_id)
+            (position,) = self._conn.execute(
+                "SELECT position FROM items WHERE id = ?", (item_id,)
+            ).fetchone()
+        return Item(
+            id=item_id,
+            category_id=category_id,
+            title=title,
+            is_checked=False,
+            position=position,
+        )
+
+    def set_item_title(self, item_id: int, title: str) -> str:
+        """Сохраняет название пункта; возвращает нормализованное значение."""
+        title = normalize_title(title, DEFAULT_ITEM_TITLE)
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE items SET title = ? WHERE id = ?", (title, item_id)
+            )
+        return title
+
 
 def open_storage(db_path: Path | str | None = None) -> Storage:
     """Открывает (при первом запуске — создаёт) БД приложения.
@@ -216,7 +286,7 @@ def open_storage(db_path: Path | str | None = None) -> Storage:
 
 
 def _open_connection(path: Path) -> sqlite3.Connection:
-    """Соединение с прагмами, схемой и нормализованным порядком категорий."""
+    """Соединение с прагмами, схемой и нормализованным порядком строк."""
     connection = sqlite3.connect(path, check_same_thread=False)
     try:
         connection.row_factory = sqlite3.Row
@@ -227,6 +297,7 @@ def _open_connection(path: Path) -> sqlite3.Connection:
         _migrate(connection)
         with connection:
             _materialize_category_positions(connection)
+            _materialize_all_item_positions(connection)
     except BaseException:
         connection.close()
         raise
@@ -278,6 +349,40 @@ def _materialize_category_positions(connection: sqlite3.Connection) -> None:
                 "UPDATE categories SET position = ? WHERE id = ?",
                 (position, row["id"]),
             )
+
+
+def _materialize_item_positions(
+    connection: sqlite3.Connection, category_id: int
+) -> None:
+    """Переписывает ``position`` пунктов категории в ``0..n-1``."""
+    rows = connection.execute(
+        "SELECT id, position FROM items WHERE category_id = ? "
+        "ORDER BY position ASC, id ASC",
+        (category_id,),
+    ).fetchall()
+    for position, row in enumerate(rows):
+        if row["position"] != position:
+            connection.execute(
+                "UPDATE items SET position = ? WHERE id = ?",
+                (position, row["id"]),
+            )
+
+
+def _materialize_all_item_positions(connection: sqlite3.Connection) -> None:
+    """Нормализует порядок пунктов во всех категориях (после открытия БД)."""
+    rows = connection.execute("SELECT DISTINCT category_id FROM items").fetchall()
+    for row in rows:
+        _materialize_item_positions(connection, row["category_id"])
+
+
+def _item_from_row(row: sqlite3.Row) -> Item:
+    return Item(
+        id=row["id"],
+        category_id=row["category_id"],
+        title=row["title"],
+        is_checked=bool(row["is_checked"]),
+        position=row["position"],
+    )
 
 
 def _quarantine(path: Path) -> Path:

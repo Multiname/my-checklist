@@ -10,6 +10,10 @@ from dataclasses import dataclass
 # (см. docs/features/feature-category.md).
 DEFAULT_CATEGORY_TITLE = "Категория"
 
+# Название пункта по умолчанию: подставляется, если ввод оставлен пустым
+# (см. docs/features/feature-item.md).
+DEFAULT_ITEM_TITLE = "Пункт"
+
 
 @dataclass(frozen=True)
 class Category:
@@ -17,6 +21,17 @@ class Category:
 
     id: int
     title: str
+    position: int
+
+
+@dataclass(frozen=True)
+class Item:
+    """Пункт чеклиста — то, что может быть выполнено (отмечено) или нет."""
+
+    id: int
+    category_id: int
+    title: str
+    is_checked: bool
     position: int
 
 
