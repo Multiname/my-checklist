@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
 import flet as ft
@@ -30,7 +30,15 @@ CATEGORY_PANEL_COLOR = ft.Colors.SURFACE_CONTAINER_HIGH
 # поэтому берётся розовый TERTIARY_CONTAINER — его видно сразу.
 CATEGORY_PANEL_SELECTED_COLOR = ft.Colors.TERTIARY_CONTAINER
 CATEGORY_PANEL_RADIUS = 12
-CATEGORY_PANEL_PADDING = ft.Padding.symmetric(horizontal=16, vertical=12)
+# Горизонтальный отступ панели задан не у панели, а у названия и у пунктов:
+# фон выделенного пункта должен закрашивать всю ширину панели, до её краёв
+# (см. docs/Design.md). По вертикали панель по-прежнему отступает 12.
+PANEL_HORIZONTAL_PADDING = 16
+CATEGORY_PANEL_VERTICAL_PADDING = 12
+CATEGORY_PANEL_PADDING = ft.Padding.symmetric(
+    vertical=CATEGORY_PANEL_VERTICAL_PADDING
+)
+CATEGORY_TITLE_PADDING = ft.Padding.symmetric(horizontal=PANEL_HORIZONTAL_PADDING)
 CATEGORY_TITLE_SIZE = 20
 CATEGORY_TITLE_WEIGHT = ft.FontWeight.BOLD
 # Явная межстрочная высота нужна, чтобы Text и TextField занимали одинаковую
@@ -69,6 +77,13 @@ ITEM_HINT_STYLE = ft.TextStyle(
 # Фон пункта прозрачный: пункт лежит внутри панели категории, и сквозь него
 # видна панель, в том числе когда категория выделена.
 ITEM_PANEL_COLOR = ft.Colors.TRANSPARENT
+# Выделенный пункт красится тем же цветом, что и выделенная категория: выделение
+# читается одинаково на обоих уровнях (см. docs/Design.md).
+ITEM_PANEL_SELECTED_COLOR = CATEGORY_PANEL_SELECTED_COLOR
+# Горизонтальный отступ пункта: он переехал с панели категории, поэтому
+# выделенная строка тянется от края до края панели, а текст стоит на прежнем
+# месте.
+ITEM_PANEL_PADDING = ft.Padding.symmetric(horizontal=PANEL_HORIZONTAL_PADDING)
 # Отступ от названия категории до первого пункта и промежуток между пунктами.
 CATEGORY_ITEMS_TOP = 8
 ITEM_SPACING = 4
@@ -105,6 +120,8 @@ LABEL_CREATE_CATEGORY = "Создать категорию"
 LABEL_RENAME_CATEGORY = "Переименовать категорию"
 LABEL_DELETE_CATEGORY = "Удалить категорию"
 LABEL_ADD_ITEM = "Добавить пункт"
+LABEL_RENAME_ITEM = "Переименовать пункт"
+LABEL_DELETE_ITEM = "Удалить пункт"
 
 
 def _no_op(event: ft.ControlEvent):
@@ -232,9 +249,15 @@ def create_items_box() -> ft.Container:
 
 
 def create_item_panel(checkbox: ft.Checkbox, title: ft.Control) -> ft.Container:
-    """Шаблон пункта: чекбокс слева, название справа, фон прозрачный."""
+    """Шаблон пункта: чекбокс слева, название справа, фон прозрачный.
+
+    Горизонтальный отступ задан самому пункту, а не панели категории: так
+    выделенный пункт закрашивает строку во всю ширину панели, как на макете, а
+    текст и чекбокс остаются на прежнем месте.
+    """
     return ft.Container(
         bgcolor=ITEM_PANEL_COLOR,
+        padding=ITEM_PANEL_PADDING,
         content=ft.Row(
             controls=[checkbox, title],
             spacing=0,
@@ -243,13 +266,52 @@ def create_item_panel(checkbox: ft.Checkbox, title: ft.Control) -> ft.Container:
     )
 
 
+def create_item_row(panel: ft.Control, on_long_press, on_tap) -> ft.GestureDetector:
+    """Область пункта: ловит тап и долгое нажатие по пункту.
+
+    Жесты принадлежат пункту, а не списку: `ReorderableListView` оборачивает
+    каждый элемент в `ReorderableDelayedDragStartListener`, и без своего
+    обработчика долгое нажатие по пункту начинало бы перетаскивание категории.
+    Распознаватель пункта лежит глубже в дереве, поэтому попадает в арену жестов
+    раньше (и его таймер долгого нажатия срабатывает первым): долгое нажатие по
+    пункту выделяет пункт, по остальной панели категории — категорию.
+    Проверено на устройстве.
+    """
+    return ft.GestureDetector(
+        content=panel,
+        on_long_press=on_long_press,
+        on_tap=on_tap,
+    )
+
+
+def item_event_handler(
+    handler: Callable[[ItemView], Awaitable[None]] | None, view: ItemView
+):
+    """Обработчик жеста пункта: передаёт приложению сам пункт, а не событие.
+
+    Flet ждёт от асинхронного обработчика корутину, а `lambda`, возвращающая
+    корутину, — обычная функция: её результат никто не ждёт. Поэтому обёртка —
+    `async def`.
+    """
+
+    async def handle(event: ft.ControlEvent | None) -> None:
+        if handler is not None:
+            await handler(view)
+
+    return handle
+
+
 def create_category_content(title: ft.Control, items: ft.Control) -> ft.Column:
     """Содержимое панели категории: название, под ним — контейнер пунктов."""
     return ft.Column(controls=[title, items], spacing=0, tight=True)
 
 
 def create_category_panel(content: ft.Control) -> ft.Container:
-    """Шаблон категории: прямоугольная панель вокруг названия и пунктов."""
+    """Шаблон категории: прямоугольная панель вокруг названия и пунктов.
+
+    У панели только вертикальные отступы: горизонтальные несут название и
+    пункты, поэтому фон выделенного пункта доходит до краёв панели.
+    """
     return ft.Container(
         bgcolor=CATEGORY_PANEL_COLOR,
         border_radius=CATEGORY_PANEL_RADIUS,
@@ -437,10 +499,22 @@ class CategoryView(TitledView):
     default_title = domain.DEFAULT_CATEGORY_TITLE
 
     def __init__(
-        self, category: domain.Category, items: Sequence[domain.Item] = ()
+        self,
+        category: domain.Category,
+        items: Sequence[domain.Item] = (),
+        *,
+        on_item_long_press: Callable[[ItemView], Awaitable[None]] | None = None,
+        on_item_tap: Callable[[ItemView], Awaitable[None]] | None = None,
     ) -> None:
         super().__init__(category.title)
         self.category = category
+        # Обработчики жестов пунктов передаёт приложение: без них пункт не смог
+        # бы выделяться и не знал бы о выделении своей категории.
+        self._item_long_press = on_item_long_press
+        self._item_tap = on_item_tap
+        # Горизонтальный отступ названия переехал с панели на слот названия:
+        # так фон выделенного пункта закрашивает всю ширину панели.
+        self.title_slot.padding = CATEGORY_TITLE_PADDING
         self.items: list[ItemView] = []
         self.items_box = create_items_box()
         self.panel = create_category_panel(
@@ -466,9 +540,10 @@ class CategoryView(TitledView):
 
     def append_item(self, item: domain.Item) -> "ItemView":
         """Добавляет пункт в конец контейнера пунктов категории."""
-        view = ItemView(item)
+        view = ItemView(item, self._item_long_press, self._item_tap)
+        view.category_view = self
         self.items.append(view)
-        self.items_box.content.controls.append(view.panel)
+        self.items_box.content.controls.append(view.row)
         self.items_box.visible = True
         return view
 
@@ -483,21 +558,37 @@ class CategoryView(TitledView):
 class ItemView(TitledView):
     """Пункт на экране: чекбокс слева, название справа.
 
-    Пункт лежит внутри панели категории, поэтому его фон прозрачный: сквозь
-    него видна панель, в том числе когда категория выделена. Отметка
-    показывается чекбоксом из БД; переключение отметки — задача 8 этапа 3.
+    Пункт лежит внутри панели категории, поэтому в обычном состоянии его фон
+    прозрачный: сквозь него видна панель, в том числе когда категория выделена.
+    Выделенный пункт закрашивается тем же цветом, что и выделенная категория.
+    Отметка показывается чекбоксом из БД; переключение отметки — задача 8
+    этапа 3.
     """
 
     default_title = domain.DEFAULT_ITEM_TITLE
 
-    def __init__(self, item: domain.Item) -> None:
+    def __init__(
+        self,
+        item: domain.Item,
+        on_long_press: Callable[[ItemView], Awaitable[None]] | None = None,
+        on_tap: Callable[[ItemView], Awaitable[None]] | None = None,
+    ) -> None:
         super().__init__(item.title)
         self.item = item
+        # Категория, в панели которой лежит пункт: по ней решается, что делает
+        # тап — внутри выделенной категории он выделяет пункт.
+        self.category_view: CategoryView | None = None
+        self.selected = False
         # Название занимает всё место справа от чекбокса и переносится
         # на вторую строку внутри этой ширины.
         self.title_slot.expand = True
         self.checkbox = ft.Checkbox(value=item.is_checked)
         self.panel = create_item_panel(self.checkbox, self.title_slot)
+        self.row = create_item_row(
+            self.panel,
+            item_event_handler(on_long_press, self),
+            item_event_handler(on_tap, self),
+        )
 
     def create_title_text(self, title: str) -> ft.Text:
         return create_item_title(title)
@@ -509,6 +600,13 @@ class ItemView(TitledView):
 
     def save_title(self, storage: Storage, title: str) -> str:
         return storage.set_item_title(self.item.id, title)
+
+    def set_selected(self, selected: bool) -> None:
+        """Выделенный пункт красится тем же цветом, что и выделенная категория."""
+        self.selected = selected
+        self.panel.bgcolor = (
+            ITEM_PANEL_SELECTED_COLOR if selected else ITEM_PANEL_COLOR
+        )
 
 
 class ChecklistApp:
@@ -535,7 +633,10 @@ class ChecklistApp:
             self.category_list, self._on_tap, self._on_tap_cancel
         )
         self._editing_view: TitledView | None = None
+        # Выделен ровно один элемент — категория или пункт: выделение категории
+        # снимается при выделении пункта и наоборот (см. docs/Project.md).
         self._selected_view: CategoryView | None = None
+        self._selected_item: ItemView | None = None
         # Идёт перетаскивание категории: кнопки button_area скрыты целиком.
         self._dragging = False
         self.button_area = create_button_area(self._actions())
@@ -692,6 +793,15 @@ class ChecklistApp:
             return
         self._remove_view(view)
         self._selected_view = None
+        if (
+            self._selected_item is not None
+            and self._selected_item.category_view is view
+        ):
+            # Выделение пункта и категории взаимоисключающие, поэтому через UI
+            # такое состояние недостижимо; на случай рассинхронизации пункт
+            # снимаем вместе с его панелью.
+            self._selected_item.set_selected(False)
+            self._selected_item = None
         self._apply_category_order(ordered)
         self._apply_selection()
         self.page.update()
@@ -699,7 +809,12 @@ class ChecklistApp:
     def _append_category(
         self, category: domain.Category, items: Sequence[domain.Item] = ()
     ) -> CategoryView:
-        view = CategoryView(category, items)
+        view = CategoryView(
+            category,
+            items,
+            on_item_long_press=self._on_item_long_press,
+            on_item_tap=self._on_item_tap,
+        )
         self.views.append(view)
         self.category_list.controls.append(view.item)
         return view
@@ -796,8 +911,10 @@ class ChecklistApp:
 
         Выделение применяется идемпотентно: повторный вызов для уже выделенной
         категории всё равно отправляет изменения клиенту — начинающемуся
-        перетаскиванию нужен свежий вид элемента.
+        перетаскиванию нужен свежий вид элемента. Выделенным может быть только
+        один элемент, поэтому выделение с пункта снимается.
         """
+        self._clear_item_selection()
         if view is not self._selected_view:
             if self._selected_view is not None:
                 self._selected_view.set_selected(False)
@@ -805,6 +922,75 @@ class ChecklistApp:
             view.set_selected(True)
         self._apply_selection()
         self.page.update()
+
+    def _select_item(self, view: ItemView) -> None:
+        """Выделяет пункт: розовый фон строки и кнопки пункта.
+
+        Розовый — тот же `ITEM_PANEL_SELECTED_COLOR`, что и у выделенной
+        категории. Категория при этом не выделена: выделен всегда ровно один
+        элемент, поэтому выделение с категории снимается.
+        """
+        if self._selected_view is not None:
+            self._selected_view.set_selected(False)
+            self._selected_view = None
+        if view is not self._selected_item:
+            self._clear_item_selection()
+            self._selected_item = view
+        view.set_selected(True)
+        self._apply_selection()
+        self.page.update()
+
+    def _clear_item_selection(self) -> None:
+        """Снимает выделение с пункта, если он выделен."""
+        view = self._selected_item
+        if view is None:
+            return
+        self._selected_item = None
+        view.set_selected(False)
+
+    async def _on_item_long_press(self, view: ItemView) -> None:
+        """Долгое нажатие по пункту: пункт выделяется и даёт виброотклик.
+
+        Долгое нажатие перехватывает пункт, а не список: иначе оно начинало бы
+        перетаскивание категории (см. `create_item_row`). Пока идёт ввод
+        названия, выделение не меняется — как и при тапе, которым закрывают
+        клавиатуру.
+        """
+        self._end_drag()
+        if self._editing_view is not None:
+            return
+        self._select_item(view)
+        if self.haptic is not None:
+            await self.haptic.medium_impact()
+
+    async def _on_item_tap(self, view: ItemView) -> None:
+        """Тап по пункту: внутри выделенной категории он выделяет пункт.
+
+        Тап по пункту в невыделенной категории — обычный тап по области списка:
+        он снимает выделение. Тап, которым закрывают клавиатуру, выделение не
+        снимает, а ввод названия — завершает.
+        """
+        # Тап возможен только когда перетаскивания уже нет. Если система
+        # прервала жест, не прислав on_reorder_end, кнопки остались бы скрытыми.
+        self._end_drag()
+        if self._editing_view is not None:
+            # Ввод закончится сохранением названия; выделение не трогаем.
+            self._commit_editing()
+            return
+        if self._tap_ended_input:
+            # Это тот же тап, что уже закрыл клавиатуру (on_tap_outside поля
+            # приходит раньше события пункта): выделение остаётся.
+            self._tap_ended_input = False
+            return
+        if (
+            view.category_view is not None
+            and view.category_view is self._selected_view
+        ):
+            self._select_item(view)
+            if self.haptic is not None:
+                await self.haptic.medium_impact()
+            return
+        self._deselect()
 
     def _on_tap(self, event: ft.ControlEvent | None = None) -> None:
         """Тап по списку завершает ввод названия или снимает выделение.
@@ -838,11 +1024,17 @@ class ChecklistApp:
         self._tap_ended_input = False
 
     def _deselect(self) -> None:
+        """Снимает выделение с категории или пункта: выделен всегда один."""
         view = self._selected_view
-        if view is None:
+        item_view = self._selected_item
+        if view is None and item_view is None:
             return
         self._selected_view = None
-        view.set_selected(False)
+        self._selected_item = None
+        if view is not None:
+            view.set_selected(False)
+        if item_view is not None:
+            item_view.set_selected(False)
         self._apply_selection()
         self.page.update()
 
@@ -855,11 +1047,18 @@ class ChecklistApp:
 
         Без выделения виден только плюс — создание категории. При выделенной
         категории плюс добавляет пункт, а карандаш и корзина работают с этой
-        категорией. Выделение пункта (задача 3 этапа 3) добавит третью строку
-        таблицы: плюс снова создаёт категорию — категория в этот момент не
-        выделена (см. docs/features/feature-button-area.md), а карандаш и
-        корзина работают с пунктом.
+        категорией. При выделенном пункте плюс снова создаёт категорию —
+        категория в этот момент не выделена (см.
+        docs/features/feature-button-area.md), — а карандаш и корзина работают
+        с пунктом. `rename_item` и `delete_item` пока заглушки: их обработчики
+        появятся на задачах 5 и 6 этапа 3.
         """
+        if self._selected_item is not None:
+            return (
+                ButtonAction(LABEL_CREATE_CATEGORY, self.create_category),
+                ButtonAction(LABEL_RENAME_ITEM),
+                ButtonAction(LABEL_DELETE_ITEM),
+            )
         if self._selected_view is not None:
             return (
                 ButtonAction(LABEL_ADD_ITEM, self.add_item),
@@ -874,7 +1073,7 @@ class ChecklistApp:
 
     def _apply_selection(self) -> None:
         """Показывает действия, подходящие текущему выделению и вводу."""
-        selected = self._selected_view is not None
+        selected = self._selected_view is not None or self._selected_item is not None
         editing = self._editing_view is not None
         for button, action in zip(
             (self.plus_button, self.pencil_button, self.trash_button),
@@ -885,7 +1084,7 @@ class ChecklistApp:
         # Пока идёт ввод названия или перетаскивание категории, контейнер
         # скрыт целиком (см. feature-button-area.md).
         self.button_area.visible = not editing and not self._dragging
-        # Пока категория выделена или идёт ввод названия, «назад»
+        # Пока категория или пункт выделены или идёт ввод названия, «назад»
         # перехватывается вместо закрытия приложения: он снимает выделение
         # либо завершает ввод (см. _on_confirm_pop).
         self.page.views[0].can_pop = not selected and not editing
@@ -904,7 +1103,9 @@ class ChecklistApp:
             await self._finish_title_input(self._editing_view)
             await view.confirm_pop(False)
             return
-        selected = self._selected_view is not None
+        selected = (
+            self._selected_view is not None or self._selected_item is not None
+        )
         if selected:
             self._deselect()
         await view.confirm_pop(not selected)

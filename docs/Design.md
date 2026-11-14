@@ -85,8 +85,9 @@
 Шаблон — `create_category_panel()` и `create_category_title()` в `src/main.py`.
 
 - Панель: скруглённый прямоугольник (радиус **12**), фон
-  `ft.Colors.SURFACE_CONTAINER_HIGH`, отступы **16** по горизонтали и **12** по
-  вертикали, ширина — вся ширина списка
+  `ft.Colors.SURFACE_CONTAINER_HIGH`, вертикальные отступы **12**, ширина — вся
+  ширина списка. Горизонтальный отступ **16** несут название и пункты, а не
+  панель: так фон выделенного пункта доходит до краёв панели (см. «Пункт»)
 - Выделенная категория: фон `ft.Colors.TERTIARY_CONTAINER` (розовый).
   Material-пара для выделения — `SECONDARY_CONTAINER`, но он почти неотличим от
   фонового `SURFACE_CONTAINER_HIGH` (разница только в оттенке), поэтому взят
@@ -149,23 +150,34 @@
 
 ### Константы списка и категории
 Заданы в `src/main.py`: `LIST_PADDING`, `LIST_BOTTOM_PADDING`, `LIST_THEME`,
-`CATEGORY_SPACING`, `CATEGORY_PANEL_COLOR`, `CATEGORY_PANEL_SELECTED_COLOR`,
-`CATEGORY_PANEL_RADIUS`, `CATEGORY_PANEL_PADDING`, `CATEGORY_TITLE_SIZE`,
-`CATEGORY_TITLE_WEIGHT`, `CATEGORY_TITLE_LINE_HEIGHT`, `CATEGORY_TITLE_STYLE`,
-`CATEGORY_HINT_STYLE`, `CATEGORY_ITEMS_TOP`.
+`CATEGORY_SPACING`, `PANEL_HORIZONTAL_PADDING`, `CATEGORY_PANEL_COLOR`,
+`CATEGORY_PANEL_SELECTED_COLOR`, `CATEGORY_PANEL_RADIUS`,
+`CATEGORY_PANEL_VERTICAL_PADDING`, `CATEGORY_PANEL_PADDING`,
+`CATEGORY_TITLE_PADDING`, `CATEGORY_TITLE_SIZE`, `CATEGORY_TITLE_WEIGHT`,
+`CATEGORY_TITLE_LINE_HEIGHT`, `CATEGORY_TITLE_STYLE`, `CATEGORY_HINT_STYLE`,
+`CATEGORY_ITEMS_TOP`.
 
 ## Пункт
-Шаблон — `create_item_panel()`, `create_item_title()` и `create_items_box()` в
-`src/main.py`; пункты лежат внутри панели категории, под её названием.
+Шаблон — `create_item_panel()`, `create_item_row()`, `create_item_title()` и
+`create_items_box()` в `src/main.py`; пункты лежат внутри панели категории, под
+её названием.
 
 - Контейнер пунктов (`create_items_box()`): отступ от названия **8**,
   промежуток между пунктами **4**. Пока пунктов нет, контейнер скрыт и не
   занимает места, поэтому панель пустой категории выглядит и измеряется как
   раньше. Отступ — внутренний `padding` контейнера, а не `spacing` колонки
   панели: скрытый контейнер не добавляет высоты
-- Шаблон пункта: чекбокс слева, название справа, фон **прозрачный**
-  (`ft.Colors.TRANSPARENT`), поэтому сквозь пункт видна панель категории —
-  в том числе выделенная
+- Шаблон пункта: чекбокс слева, название справа. В обычном состоянии фон
+  **прозрачный** (`ft.Colors.TRANSPARENT`), поэтому сквозь пункт видна панель
+  категории — в том числе выделенная. Выделенный пункт закрашивается розовым
+  `TERTIARY_CONTAINER` — тем же цветом, что и выделенная категория, — и строка
+  тянется от края до края панели: горизонтальный отступ **16** задан самому
+  пункту, а у панели горизонтальных отступов нет
+- Фон меняется только у выделенного пункта, остальные параметры строки те же,
+  поэтому при выделении ничего не сдвигается и высота строки не меняется
+- Пункт ловит жесты сам (`ft.GestureDetector` вокруг панели пункта): долгое
+  нажатие по пункту выделяет пункт, а не начинает перетаскивание категории
+  (см. [feature-item.md](features/feature-item.md), «Пункты можно выделять»)
 - Название пункта: **16** px, `FontWeight.NORMAL`, межстрочная высота **1.45**
   (та же, что у категории: `Text` и `TextField` должны занимать одинаковую
   высоту, иначе строка «прыгает» при вводе), не более **2** строк, дальше
@@ -182,7 +194,25 @@
   при выделении пункта действие слотов меняется (см.
   [feature-button-area.md](features/feature-button-area.md))
 
+### Выделение пункта
+- Выделить пункт можно двумя способами (см.
+  [feature-item.md](features/feature-item.md)): долгим нажатием по пункту, когда
+  ничего не выделено, или тапом по пункту внутри выделенной категории
+- Выделение сопровождается виброоткликом (`HapticFeedback.medium_impact()`) —
+  и при долгом нажатии, и при выделении тапом
+- Выделен всегда ровно один элемент: при выделении пункта выделение снимается
+  с категории (панель возвращается к обычному фону), и наоборот
+- Тап по любой области, кроме кнопок `button_area`, снимает выделение пункта;
+  прокрутка — нет. Тап, которым закрывают клавиатуру, выделение не снимает
+- Кнопка/жест «назад» при выделенном пункте не закрывает приложение: снимает
+  выделение (как и при выделенной категории)
+- Пока пункт выделен, в `button_area` видны `create_category` (плюс),
+  `rename_item` (карандаш) и `delete_item` (корзина); скрываются они при снятии
+  выделения. Действия `rename_item`/`delete_item` — задачи 5 и 6 этапа 3:
+  сейчас кнопки видны, а обработчики — заглушки
+
 ### Константы пункта
 Заданы в `src/main.py`: `ITEM_TITLE_SIZE`, `ITEM_TITLE_WEIGHT`,
 `ITEM_TITLE_LINE_HEIGHT`, `ITEM_TITLE_STYLE`, `ITEM_HINT_STYLE`,
-`ITEM_PANEL_COLOR`, `ITEM_SPACING`.
+`ITEM_PANEL_COLOR`, `ITEM_PANEL_SELECTED_COLOR`, `ITEM_PANEL_PADDING`,
+`ITEM_SPACING`.

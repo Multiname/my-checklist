@@ -91,6 +91,11 @@ def test_category_panel_is_rectangular_with_title_on_top():
     assert panel.bgcolor == main.CATEGORY_PANEL_COLOR
     assert panel.border_radius == main.CATEGORY_PANEL_RADIUS
     assert panel.padding == main.CATEGORY_PANEL_PADDING
+    # Горизонтальных отступов у панели нет: их несут название и пункты, иначе
+    # выделенный пункт не смог бы закрасить панель до краёв.
+    assert panel.padding.left == panel.padding.right == 0
+    assert panel.padding.top == main.CATEGORY_PANEL_VERTICAL_PADDING
+    assert panel.padding.bottom == main.CATEGORY_PANEL_VERTICAL_PADDING
 
 
 def test_category_item_keeps_the_gap_inside_the_list_item():
@@ -385,6 +390,8 @@ def test_category_view_starts_with_title_text():
     title_slot, items_box = view.panel.content.controls
     assert title_slot is view.title_slot
     assert items_box is view.items_box
+    # Горизонтальный отступ названия — у слота, а не у панели.
+    assert view.title_slot.padding == main.CATEGORY_TITLE_PADDING
 
 
 def test_buttons_hide_while_editing_title():
@@ -1114,6 +1121,11 @@ def test_item_panel_has_checkbox_on_the_left_and_transparent_background():
     assert isinstance(panel, ft.Container)
     # Фон прозрачный: сквозь пункт видна панель категории.
     assert panel.bgcolor == main.ITEM_PANEL_COLOR == ft.Colors.TRANSPARENT
+    # Горизонтальный отступ — у пункта, а не у панели: выделенная строка
+    # закрашивает всю ширину панели.
+    assert panel.padding == main.ITEM_PANEL_PADDING
+    assert panel.padding.left == main.ITEM_PANEL_PADDING.right == 16
+    assert panel.padding.top == panel.padding.bottom == 0
     assert panel.content.controls[0] is checkbox
     assert panel.content.controls[1] is title
     assert panel.content.vertical_alignment == ft.CrossAxisAlignment.CENTER
@@ -1148,12 +1160,17 @@ def test_category_view_keeps_items_inside_its_items_box():
     ]
     assert view.items_box.visible is True
     assert view.items_box.content.controls == [
-        item_view.panel for item_view in view.items
+        item_view.row for item_view in view.items
     ]
     first = view.items[0]
     assert first.checkbox.value is False
+    assert first.row.content is first.panel
     assert first.panel.content.controls[0] is first.checkbox
     assert first.title_slot.content is first.title_text
+    # Пункт знает свою категорию: по ней решается, выделяет ли тап пункт.
+    assert first.category_view is view
+    assert first.row.on_long_press is not None
+    assert first.row.on_tap is not None
 
 
 def test_item_checkbox_shows_mark_saved_in_storage():
@@ -1177,7 +1194,7 @@ def test_add_item_appends_to_selected_category_and_opens_input(monkeypatch):
     ]
     assert [view.title for view in home.items] == ["Пункт"]
     assert home.items_box.visible is True
-    assert home.items_box.content.controls == [home.items[0].panel]
+    assert home.items_box.content.controls == [home.items[0].row]
     assert work.items == []
     # На месте названия пункта — поле ввода с подсказкой «Пункт».
     item_view = home.items[0]
@@ -1203,7 +1220,7 @@ def test_add_item_goes_to_the_end_of_the_category(monkeypatch):
     asyncio.run(app.add_item(None))
 
     assert [view.title for view in home.items] == ["Первый", "Второй", "Пункт"]
-    assert home.items_box.content.controls[-1] is home.items[-1].panel
+    assert home.items_box.content.controls[-1] is home.items[-1].row
 
 
 def test_add_item_saves_entered_title_and_restores_buttons(monkeypatch):
@@ -1366,7 +1383,7 @@ def test_items_are_restored_from_storage_on_mount():
     assert [view.title for view in home.items] == ["Помыть посуду", "Пропылесосить"]
     assert [view.title for view in work.items] == ["Отчёт"]
     assert work.items[0].checkbox.value is True
-    assert home.items_box.content.controls == [view.panel for view in home.items]
+    assert home.items_box.content.controls == [view.row for view in home.items]
     assert home.items_box.visible is True
 
 
@@ -1383,6 +1400,278 @@ def test_delete_category_drops_item_input_state(monkeypatch):
     assert app._editing_view is None
     assert app.views == [work]
     assert app.button_area.visible is True
+    assert page.views[0].can_pop is True
+
+
+# Выделение пунктов — задача 3 этапа 3.
+
+
+def make_app_with_items():
+    """Приложение «Дом»/«Работа» с двумя пунктами в «Доме»."""
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    first = home.append_item(item(1, home.category.id, "Молоко"))
+    second = home.append_item(item(2, home.category.id, "Хлеб", position=1))
+    return page, app, haptic, home, work, first, second
+
+
+def test_item_selected_color_is_the_category_selected_color():
+    """Выделенный пункт красится тем же розовым, что и выделенная категория."""
+    assert main.ITEM_PANEL_SELECTED_COLOR == main.CATEGORY_PANEL_SELECTED_COLOR
+    assert main.ITEM_PANEL_SELECTED_COLOR == ft.Colors.TERTIARY_CONTAINER
+
+
+def test_item_row_is_a_gesture_area_around_the_panel():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+
+    assert isinstance(first.row, ft.GestureDetector)
+    assert first.row.content is first.panel
+    assert callable(first.row.on_long_press)
+    assert callable(first.row.on_tap)
+    # Жесты принадлежат пункту, а не списку: иначе долгое нажатие по пункту
+    # начинало бы перетаскивание категории.
+    assert first.row is not first.panel
+
+
+def test_item_set_selected_switches_background():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+
+    first.set_selected(True)
+    assert first.selected is True
+    assert first.panel.bgcolor == main.ITEM_PANEL_SELECTED_COLOR
+
+    first.set_selected(False)
+    assert first.selected is False
+    assert first.panel.bgcolor == main.ITEM_PANEL_COLOR == ft.Colors.TRANSPARENT
+
+
+def test_long_press_on_item_selects_it_with_haptic_and_pink_row():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    page.updates = 0
+
+    asyncio.run(first.row.on_long_press(None))
+
+    # Выделен именно пункт, а не его категория.
+    assert app._selected_item is first
+    assert app._selected_view is None
+    assert home.selected is False
+    assert home.panel.bgcolor == main.CATEGORY_PANEL_COLOR
+    assert first.selected is True
+    assert first.panel.bgcolor == main.ITEM_PANEL_SELECTED_COLOR
+    assert second.panel.bgcolor == main.ITEM_PANEL_COLOR
+    assert haptic.calls == ["medium_impact"]
+    assert page.updates == 1
+    # Пока пункт выделен, «назад» перехватывается.
+    assert page.views[0].can_pop is False
+
+
+def test_long_press_on_another_item_moves_selection():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    asyncio.run(app._on_item_long_press(first))
+
+    asyncio.run(app._on_item_long_press(second))
+
+    assert app._selected_item is second
+    assert first.selected is False
+    assert first.panel.bgcolor == main.ITEM_PANEL_COLOR
+    assert second.panel.bgcolor == main.ITEM_PANEL_SELECTED_COLOR
+    # Виброотклик даётся на каждое выделение, в том числе повторное.
+    assert haptic.calls == ["medium_impact", "medium_impact"]
+
+
+def test_long_press_on_item_clears_category_selection():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    app._select_category(home)
+
+    asyncio.run(app._on_item_long_press(first))
+
+    assert app._selected_view is None
+    assert home.selected is False
+    assert home.panel.bgcolor == main.CATEGORY_PANEL_COLOR
+    assert app._selected_item is first
+    assert first.panel.bgcolor == main.ITEM_PANEL_SELECTED_COLOR
+
+
+def test_tap_on_item_inside_selected_category_selects_it():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    app._select_category(home)
+    page.updates = 0
+    haptic.calls.clear()
+
+    asyncio.run(first.row.on_tap(None))
+
+    # Выделение категории сброшено, пункт выделен.
+    assert app._selected_view is None
+    assert home.panel.bgcolor == main.CATEGORY_PANEL_COLOR
+    assert app._selected_item is first
+    assert first.panel.bgcolor == main.ITEM_PANEL_SELECTED_COLOR
+    assert haptic.calls == ["medium_impact"]
+    assert page.updates == 1
+
+
+def test_tap_on_item_of_another_category_deselects_category():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    app._select_category(work)
+
+    asyncio.run(app._on_item_tap(first))
+
+    # Пункт «Дома» не в выделенной категории: тап только снимает выделение.
+    assert app._selected_view is None
+    assert app._selected_item is None
+    assert work.panel.bgcolor == main.CATEGORY_PANEL_COLOR
+
+
+def test_tap_on_item_without_selection_changes_nothing():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    page.updates = 0
+
+    asyncio.run(first.row.on_tap(None))
+
+    assert app._selected_item is None
+    assert app._selected_view is None
+    assert page.updates == 0
+
+
+def test_tap_on_selected_item_deselects_it():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    asyncio.run(app._on_item_long_press(first))
+    page.updates = 0
+
+    asyncio.run(app._on_item_tap(first))
+
+    assert app._selected_item is None
+    assert first.selected is False
+    assert first.panel.bgcolor == main.ITEM_PANEL_COLOR
+    assert page.updates == 1
+
+
+def test_tap_on_list_area_deselects_item():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    asyncio.run(app._on_item_long_press(first))
+    page.updates = 0
+
+    app.category_area.content.on_tap(None)
+
+    assert app._selected_item is None
+    assert first.selected is False
+    assert first.panel.bgcolor == main.ITEM_PANEL_COLOR
+    assert page.views[0].can_pop is True
+    assert page.updates == 1
+
+
+def test_back_with_item_selection_deselects_without_closing_app():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    asyncio.run(app._on_item_long_press(first))
+
+    asyncio.run(app._on_confirm_pop(None))
+
+    assert app._selected_item is None
+    assert first.selected is False
+    assert page.views[0].can_pop is True
+    # False — не выходить из приложения.
+    assert page.views[0].pops == [False]
+
+
+def test_long_press_on_category_clears_item_selection():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    asyncio.run(app._on_item_long_press(first))
+
+    asyncio.run(app._on_reorder_start(reorder_start(app, 0)))
+
+    assert app._selected_item is None
+    assert first.selected is False
+    assert first.panel.bgcolor == main.ITEM_PANEL_COLOR
+    assert app._selected_view is home
+    assert home.panel.bgcolor == main.CATEGORY_PANEL_SELECTED_COLOR
+
+
+def test_buttons_switch_between_category_and_item_selection():
+    """При выделении пункта — rename_item/delete_item, и наоборот."""
+    page, app, haptic, home, work, first, second = make_app_with_items()
+
+    asyncio.run(app._on_item_long_press(first))
+
+    # Выделен пункт: плюс создаёт категорию, карандаш и корзина — пункт.
+    assert app.button_area.visible is True
+    assert app.plus_button.visible is True
+    assert app.plus_button.on_click == app.create_category
+    assert app.plus_button.content.semantics_label == main.LABEL_CREATE_CATEGORY
+    assert app.pencil_button.visible is True
+    assert app.pencil_button.content.semantics_label == main.LABEL_RENAME_ITEM
+    assert app.trash_button.visible is True
+    assert app.trash_button.content.semantics_label == main.LABEL_DELETE_ITEM
+
+    app._select_category(work)
+
+    # Выделена категория: слоты снова показывают действия категории.
+    assert app._selected_item is None
+    assert app.plus_button.content.semantics_label == main.LABEL_ADD_ITEM
+    assert app.plus_button.on_click == app.add_item
+    assert app.pencil_button.content.semantics_label == main.LABEL_RENAME_CATEGORY
+    assert app.trash_button.content.semantics_label == main.LABEL_DELETE_CATEGORY
+
+    app._deselect()
+
+    # Выделения нет: виден только плюс.
+    assert app.plus_button.content.semantics_label == main.LABEL_CREATE_CATEGORY
+    assert app.pencil_button.visible is False
+    assert app.trash_button.visible is False
+
+
+def test_item_tap_while_editing_title_keeps_selection():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    app._select_category(home)
+    app._begin_title_input(home, home.title)
+
+    asyncio.run(app._on_item_tap(first))
+
+    # Тап лишь запускает завершение ввода, выделение остаётся.
+    assert app._selected_view is home
+    assert page.tasks == [(app._finish_title_input, (home,))]
+
+    asyncio.run(app._finish_title_input(home))
+    assert app._selected_view is home
+
+
+def test_tap_on_item_that_closes_keyboard_keeps_selection():
+    """Тап, закрывший клавиатуру, не должен снимать выделение пункта."""
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    asyncio.run(app._on_item_long_press(first))
+    field = app._begin_title_input(home, home.title)
+
+    asyncio.run(field.on_tap_outside(None))
+    asyncio.run(app._on_item_tap(first))
+
+    assert app._selected_item is first
+    assert first.selected is True
+    assert app._tap_ended_input is False
+
+
+def test_item_long_press_is_ignored_while_title_is_edited():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    app._select_category(home)
+    app._begin_title_input(home, home.title)
+    haptic.calls.clear()
+
+    asyncio.run(app._on_item_long_press(first))
+
+    assert app._selected_item is None
+    assert app._selected_view is home
+    assert haptic.calls == []
+
+
+def test_delete_category_clears_item_selection_of_its_items():
+    """Защита от рассинхронизации: пункт выделен, и его категорию удаляют."""
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    app._selected_item = first
+    first.set_selected(True)
+    app._selected_view = home
+
+    asyncio.run(app.delete_category(None))
+
+    assert app.views == [work]
+    assert app._selected_item is None
+    assert app._selected_view is None
+    assert app.pencil_button.visible is False
     assert page.views[0].can_pop is True
 
 
