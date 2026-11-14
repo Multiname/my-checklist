@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 import flet as ft
 
@@ -68,18 +70,57 @@ ICON_PLUS = "icons/plus-sign.webp"
 ICON_PENCIL = "icons/pencil.webp"
 ICON_TRASH = "icons/trash-bin.webp"
 
+# Слоты button_area по порядку сверху вниз. Иконка у слота постоянная: у
+# категорий и пунктов они совпадают (см. docs/Design.md), поэтому при смене
+# выделения меняется действие слота, а не картинка.
+BUTTON_ICONS = (ICON_PLUS, ICON_PENCIL, ICON_TRASH)
+
+# Подписи кнопок для TalkBack: иконки у категорий и пунктов одинаковые, так
+# что текущее действие пользователь узнаёт по контексту, а озвучка — отсюда.
+LABEL_CREATE_CATEGORY = "Создать категорию"
+LABEL_RENAME_CATEGORY = "Переименовать категорию"
+LABEL_DELETE_CATEGORY = "Удалить категорию"
+LABEL_ADD_ITEM = "Добавить пункт"
+
 
 def _no_op(event: ft.ControlEvent):
     """Заглушка обработчика: тап по кнопке даёт ripple, но ничего не делает."""
 
 
-def icon_button(icon_src: str, label: str, on_click) -> ft.Container:
+@dataclass(frozen=True)
+class ButtonAction:
+    """Действие одного слота button_area.
+
+    Кнопки постоянные (плюс, карандаш, корзина), а действие зависит от
+    выделения: у категорий и пунктов иконки одни и те же, поэтому слот хранит
+    только подпись (её читает TalkBack), обработчик и видимость.
+    """
+
+    label: str
+    handler: Callable[..., object] = _no_op
+    visible: bool = True
+
+
+def bind_button(button: ft.Container, action: ButtonAction) -> None:
+    """Назначает кнопке button_area действие для текущего выделения.
+
+    Виджет не пересоздаётся: меняются подпись, обработчик и видимость, поэтому
+    кнопка не мигает и не сдвигается. Обработчик Flet ищет на сервере в момент
+    события (`Control._trigger_event`), так что новое действие работает сразу,
+    а подпись уходит клиенту со следующим `page.update()`.
+    """
+    button.content.semantics_label = action.label
+    button.on_click = action.handler
+    button.visible = action.visible
+
+
+def icon_button(icon_src: str, action: ButtonAction) -> ft.Container:
     """Круглая кнопка с иконкой для button_area.
 
     Подсказка задана только через semantics_label: виджет tooltip перехватывает
     долгое нажатие и задерживает эффект тапа (проверено на устройстве).
     """
-    return ft.Container(
+    button = ft.Container(
         width=BUTTON_SIZE,
         height=BUTTON_SIZE,
         # Радиус 28 (= половина стороны) вместо shape=CIRCLE: Flet передаёт
@@ -93,21 +134,29 @@ def icon_button(icon_src: str, label: str, on_click) -> ft.Container:
         ),
         alignment=ft.Alignment.CENTER,
         ink=True,
-        on_click=on_click,
         content=ft.Image(
             src=icon_src,
             width=BUTTON_ICON_SIZE,
             height=BUTTON_ICON_SIZE,
             fit=ft.BoxFit.CONTAIN,
-            semantics_label=label,
         ),
     )
+    bind_button(button, action)
+    return button
 
 
-def create_button_area(
-    on_create_category=_no_op, on_rename_category=_no_op, on_delete_category=_no_op
-) -> ft.Container:
-    """button_area: контейнер с кнопками управления категориями справа снизу."""
+def create_button_area(actions: Sequence[ButtonAction]) -> ft.Container:
+    """button_area: контейнер из трёх кнопок управления справа снизу.
+
+    Слоты постоянные — плюс, карандаш, корзина (`BUTTON_ICONS`), — а действия
+    для текущего выделения задаёт ``actions``: ровно по одному на слот.
+    Какое действие попадает в какой слот, решает `ChecklistApp._actions()`.
+    """
+    if len(actions) != len(BUTTON_ICONS):
+        raise ValueError(
+            f"button_area: нужно {len(BUTTON_ICONS)} действия, "
+            f"передано {len(actions)}"
+        )
     return ft.Container(
         right=BUTTON_AREA_MARGIN,
         bottom=BUTTON_AREA_MARGIN,
@@ -115,11 +164,8 @@ def create_button_area(
             spacing=BUTTON_SPACING,
             tight=True,
             controls=[
-                icon_button(ICON_PLUS, "Создать категорию", on_create_category),
-                icon_button(
-                    ICON_PENCIL, "Переименовать категорию", on_rename_category
-                ),
-                icon_button(ICON_TRASH, "Удалить категорию", on_delete_category),
+                icon_button(icon_src, action)
+                for icon_src, action in zip(BUTTON_ICONS, actions, strict=True)
             ],
         ),
     )
@@ -287,18 +333,16 @@ class ChecklistApp:
         self.category_area = create_category_area(
             self.category_list, self._on_tap, self._on_tap_cancel
         )
-        self.button_area = create_button_area(
-            self.create_category, self.rename_category, self.delete_category
-        )
-        (
-            self.create_button,
-            self.rename_button,
-            self.delete_button,
-        ) = self.button_area.content.controls
         self._editing_view: CategoryView | None = None
         self._selected_view: CategoryView | None = None
         # Идёт перетаскивание категории: кнопки button_area скрыты целиком.
         self._dragging = False
+        self.button_area = create_button_area(self._actions())
+        (
+            self.plus_button,
+            self.pencil_button,
+            self.trash_button,
+        ) = self.button_area.content.controls
         self._keyboard_open = False
         # Тап вне поля закрыл клавиатуру: следующий on_tap списка — тот же
         # самый тап, он не должен снимать выделение (см. _on_tap).
@@ -568,13 +612,43 @@ class ChecklistApp:
         self._apply_selection()
         self.page.update()
 
+    def _actions(self) -> tuple[ButtonAction, ButtonAction, ButtonAction]:
+        """Действия трёх слотов button_area для текущего выделения.
+
+        Слоты постоянные (плюс, карандаш, корзина), иконки у категорий и
+        пунктов совпадают, поэтому при смене выделения меняется действие
+        каждого слота, а не набор кнопок (см. docs/Project.md).
+
+        Без выделения виден только плюс — создание категории. При выделенной
+        категории плюс добавляет пункт (обработчик появится на задаче 2 этапа
+        3), а карандаш и корзина работают с этой категорией. Выделение пункта
+        (задача 3 этапа 3) добавит третью строку таблицы: плюс снова создаёт
+        категорию — категория в этот момент не выделена
+        (см. docs/features/feature-button-area.md), а карандаш и корзина
+        работают с пунктом.
+        """
+        if self._selected_view is not None:
+            return (
+                ButtonAction(LABEL_ADD_ITEM),
+                ButtonAction(LABEL_RENAME_CATEGORY, self.rename_category),
+                ButtonAction(LABEL_DELETE_CATEGORY, self.delete_category),
+            )
+        return (
+            ButtonAction(LABEL_CREATE_CATEGORY, self.create_category),
+            ButtonAction(LABEL_RENAME_CATEGORY, self.rename_category, visible=False),
+            ButtonAction(LABEL_DELETE_CATEGORY, self.delete_category, visible=False),
+        )
+
     def _apply_selection(self) -> None:
-        """Показывает кнопки, подходящие текущему выделению и вводу."""
+        """Показывает действия, подходящие текущему выделению и вводу."""
         selected = self._selected_view is not None
         editing = self._editing_view is not None
-        self.create_button.visible = not selected
-        self.rename_button.visible = selected
-        self.delete_button.visible = selected
+        for button, action in zip(
+            (self.plus_button, self.pencil_button, self.trash_button),
+            self._actions(),
+            strict=True,
+        ):
+            bind_button(button, action)
         # Пока идёт ввод названия или перетаскивание категории, контейнер
         # скрыт целиком (см. feature-button-area.md).
         self.button_area.visible = not editing and not self._dragging

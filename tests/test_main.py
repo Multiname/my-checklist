@@ -2,10 +2,20 @@ import asyncio
 from pathlib import Path
 
 import flet as ft
+import pytest
 
 import domain
 import main
 import storage
+
+
+def default_actions():
+    """Действия слотов, когда ничего не выделено: виден только плюс."""
+    return [
+        main.ButtonAction(main.LABEL_CREATE_CATEGORY),
+        main.ButtonAction(main.LABEL_RENAME_CATEGORY, visible=False),
+        main.ButtonAction(main.LABEL_DELETE_CATEGORY, visible=False),
+    ]
 
 
 def test_app_module_is_importable():
@@ -13,38 +23,54 @@ def test_app_module_is_importable():
 
 
 def test_button_area_is_pinned_to_bottom_right():
-    button_area = main.create_button_area()
+    button_area = main.create_button_area(default_actions())
 
     assert button_area.right == main.BUTTON_AREA_MARGIN
     assert button_area.bottom == main.BUTTON_AREA_MARGIN
 
 
-def test_button_area_has_category_buttons():
-    buttons = main.create_button_area().content.controls
+def test_button_area_has_three_permanent_slots():
+    """Слоты постоянные: плюс, карандаш и корзина — по кнопке на слот."""
+    buttons = main.create_button_area(default_actions()).content.controls
 
-    assert [button.content.src for button in buttons] == [
-        main.ICON_PLUS,
-        main.ICON_PENCIL,
-        main.ICON_TRASH,
-    ]
+    assert [button.content.src for button in buttons] == list(main.BUTTON_ICONS)
     for button in buttons:
         assert button.width == main.BUTTON_SIZE
         assert button.height == main.BUTTON_SIZE
         assert button.border_radius == main.BUTTON_SIZE / 2
 
 
+def test_button_area_binds_each_action_to_its_slot():
+    actions = default_actions()
+
+    buttons = main.create_button_area(actions).content.controls
+
+    assert [button.content.semantics_label for button in buttons] == [
+        action.label for action in actions
+    ]
+    assert [button.visible for button in buttons] == [True, False, False]
+
+
+def test_button_area_requires_one_action_per_slot():
+    with pytest.raises(ValueError):
+        main.create_button_area([main.ButtonAction(main.LABEL_CREATE_CATEGORY)])
+
+
 def test_buttons_are_clickable_with_ink_ripple():
-    for button in main.create_button_area().content.controls:
+    for button in main.create_button_area(default_actions()).content.controls:
         assert button.ink is True
         assert callable(button.on_click)
 
 
-def test_create_button_runs_given_handler():
+def test_plus_button_runs_given_handler():
     events = []
-    button_area = main.create_button_area(lambda event: events.append(event))
-    create_category = button_area.content.controls[0]
+    actions = default_actions()
+    actions[0] = main.ButtonAction(
+        main.LABEL_CREATE_CATEGORY, lambda event: events.append(event)
+    )
+    plus_button = main.create_button_area(actions).content.controls[0]
 
-    create_category.on_click(None)
+    plus_button.on_click(None)
 
     assert len(events) == 1
 
@@ -52,7 +78,7 @@ def test_create_button_runs_given_handler():
 def test_button_icons_exist_in_assets():
     assets_dir = Path(__file__).parent.parent / "src" / "assets"
 
-    for icon in (main.ICON_PLUS, main.ICON_PENCIL, main.ICON_TRASH):
+    for icon in main.BUTTON_ICONS:
         assert (assets_dir / icon).is_file()
 
 
@@ -394,10 +420,11 @@ def test_drag_hides_button_area_and_returns_it():
 
     assert app._dragging is False
     assert app.button_area.visible is True
-    # Выделение пережило drag: видны кнопки выделенной категории.
+    # Выделение пережило drag: слоты показывают действия выделенной категории.
     assert app._selected_view is home
-    assert app.rename_button.visible is True
-    assert app.create_button.visible is False
+    assert app.plus_button.content.semantics_label == main.LABEL_ADD_ITEM
+    assert app.pencil_button.visible is True
+    assert app.trash_button.visible is True
 
 
 def test_drag_with_new_order_restores_button_area():
@@ -536,25 +563,54 @@ def test_reorder_write_error_keeps_list_and_reports():
     assert page.messages == ["Не удалось сохранить порядок категорий"]
 
 
-def test_selection_swaps_button_area_buttons():
+def test_selection_swaps_button_actions():
+    """Слоты кнопок постоянные, а действие зависит от выделения."""
     page, app, haptic, (home,) = make_app("Дом")
 
-    # Ничего не выделено: видна только кнопка создания.
-    assert app.create_button.visible is True
-    assert app.rename_button.visible is False
-    assert app.delete_button.visible is False
+    # Ничего не выделено: виден только плюс, он создаёт категорию.
+    assert app.plus_button.visible is True
+    assert app.plus_button.on_click == app.create_category
+    assert app.plus_button.content.semantics_label == main.LABEL_CREATE_CATEGORY
+    assert app.pencil_button.visible is False
+    assert app.trash_button.visible is False
 
     app._select_category(home)
 
-    assert app.create_button.visible is False
-    assert app.rename_button.visible is True
-    assert app.delete_button.visible is True
+    # Выделена категория: плюс добавляет пункт, карандаш и корзина — категорию.
+    assert app.plus_button.visible is True
+    assert app.plus_button.content.semantics_label == main.LABEL_ADD_ITEM
+    # Обработчик добавления пункта появится на задаче 2 этапа 3.
+    assert app.plus_button.on_click == main._no_op
+    assert app.pencil_button.visible is True
+    assert app.pencil_button.on_click == app.rename_category
+    assert app.trash_button.visible is True
+    assert app.trash_button.on_click == app.delete_category
 
     app._deselect()
 
-    assert app.create_button.visible is True
-    assert app.rename_button.visible is False
-    assert app.delete_button.visible is False
+    assert app.plus_button.on_click == app.create_category
+    assert app.plus_button.content.semantics_label == main.LABEL_CREATE_CATEGORY
+    assert app.pencil_button.visible is False
+    assert app.trash_button.visible is False
+
+
+def test_switching_selection_keeps_the_same_buttons():
+    """Кнопки не пересоздаются: слоты и иконки остаются те же."""
+    page, app, haptic, (home,) = make_app("Дом")
+    buttons = list(app.button_area.content.controls)
+    icons = [button.content.src for button in buttons]
+
+    app._select_category(home)
+    app._deselect()
+
+    assert all(
+        actual is expected
+        for actual, expected in zip(app.button_area.content.controls, buttons)
+    )
+    assert [button.content.src for button in buttons] == icons
+    assert app.plus_button.content.src == main.ICON_PLUS
+    assert app.pencil_button.content.src == main.ICON_PENCIL
+    assert app.trash_button.content.src == main.ICON_TRASH
 
 
 def test_tap_on_list_deselects_category():
@@ -645,38 +701,40 @@ def test_category_input_for_rename_is_prefilled_and_taps_outside_separately():
     assert category_input.on_tap_outside is on_tap_outside
 
 
-def test_rename_button_runs_given_handler():
+def test_pencil_button_runs_given_handler():
     events = []
-    button_area = main.create_button_area(
-        main._no_op, lambda event: events.append(event)
+    actions = default_actions()
+    actions[1] = main.ButtonAction(
+        main.LABEL_RENAME_CATEGORY, lambda event: events.append(event)
     )
-    rename_category = button_area.content.controls[1]
+    pencil_button = main.create_button_area(actions).content.controls[1]
 
-    rename_category.on_click(None)
+    pencil_button.on_click(None)
 
     assert len(events) == 1
 
 
-def test_rename_button_uses_app_handler():
+def test_pencil_button_renames_category_without_item_selection():
     page, app, haptic, views = make_app("Дом")
 
-    assert app.rename_button.on_click == app.rename_category
+    assert app.pencil_button.on_click == app.rename_category
 
 
-def test_delete_button_uses_app_handler():
+def test_trash_button_deletes_category_without_item_selection():
     page, app, haptic, views = make_app("Дом")
 
-    assert app.delete_button.on_click == app.delete_category
+    assert app.trash_button.on_click == app.delete_category
 
 
-def test_delete_button_runs_given_handler():
+def test_trash_button_runs_given_handler():
     events = []
-    button_area = main.create_button_area(
-        main._no_op, main._no_op, lambda event: events.append(event)
+    actions = default_actions()
+    actions[2] = main.ButtonAction(
+        main.LABEL_DELETE_CATEGORY, lambda event: events.append(event)
     )
-    delete_category = button_area.content.controls[2]
+    trash_button = main.create_button_area(actions).content.controls[2]
 
-    delete_category.on_click(None)
+    trash_button.on_click(None)
 
     assert len(events) == 1
 
@@ -752,13 +810,13 @@ def test_rename_saves_title_and_keeps_selection():
     assert home.title_text.value == "Квартира"
     assert home.panel.content is home.title_text
     assert app.storage.saved == [(home.category.id, "Квартира")]
-    # Выделение пережило переименование: кнопки остались прежними.
+    # Выделение пережило переименование: слоты остались прежними.
     assert app._selected_view is home
     assert home.selected is True
     assert app.button_area.visible is True
-    assert app.rename_button.visible is True
-    assert app.delete_button.visible is True
-    assert app.create_button.visible is False
+    assert app.plus_button.content.semantics_label == main.LABEL_ADD_ITEM
+    assert app.pencil_button.visible is True
+    assert app.trash_button.visible is True
     assert page.views[0].can_pop is False
 
 
@@ -924,11 +982,12 @@ def test_delete_removes_selected_category_from_list_and_storage():
     assert app.category_list.controls == [home.item, rest.item]
     # Позиции оставшихся — из БД, без дыр в порядке.
     assert [view.category.position for view in app.views] == [0, 1]
-    # Выделение снято: удалённой категории больше нет, кнопки — исходные.
+    # Выделение снято: удалённой категории больше нет, слоты — исходные.
     assert app._selected_view is None
-    assert app.create_button.visible is True
-    assert app.rename_button.visible is False
-    assert app.delete_button.visible is False
+    assert app.plus_button.on_click == app.create_category
+    assert app.plus_button.content.semantics_label == main.LABEL_CREATE_CATEGORY
+    assert app.pencil_button.visible is False
+    assert app.trash_button.visible is False
     assert app.button_area.visible is True
     assert page.views[0].can_pop is True
     assert page.updates == 1
@@ -968,7 +1027,7 @@ def test_delete_write_error_keeps_category_and_reports():
     assert app._selected_view is home
     assert home.selected is True
     assert home.panel.bgcolor == main.CATEGORY_PANEL_SELECTED_COLOR
-    assert app.delete_button.visible is True
+    assert app.trash_button.visible is True
     assert page.messages == ["Не удалось удалить категорию"]
 
 
