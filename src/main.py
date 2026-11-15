@@ -1585,6 +1585,23 @@ class ChecklistApp:
             return
         await self._start_title_input(view, initial=view.title)
 
+    async def rename_item(self, event: ft.ControlEvent | None = None) -> None:
+        """rename_item: ввод нового названия вместо названия пункта.
+
+        Поле открывается с прежним названием выделенного пункта, поэтому
+        ввод можно дополнить, а не набирать заново. Выделение при
+        переименовании не снимается: после сохранения кнопки
+        `rename_item`/`delete_item` остаются на месте. Ввод на месте названия
+        обслуживает та же машинерия, что и у категории: `ItemView` — это
+        `TitledView`, а запись идёт в `Storage.set_item_title()`.
+        """
+        view = self._selected_item
+        if view is None or self._editing_view is not None:
+            # Кнопка показана только при выделенном пункте; ввод названия
+            # скрывает button_area целиком, повторный вызов невозможен.
+            return
+        await self._start_title_input(view, initial=view.title)
+
     async def delete_category(self, event: ft.ControlEvent | None = None) -> None:
         """delete_category: удаляет выделенную категорию из списка и из БД.
 
@@ -2644,13 +2661,13 @@ class ChecklistApp:
         категорией. При выделенном пункте плюс снова создаёт категорию —
         категория в этот момент не выделена (см.
         docs/features/feature-button-area.md), — а карандаш и корзина работают
-        с пунктом. `rename_item` и `delete_item` пока заглушки: их обработчики
-        появятся на задачах 5 и 6 этапа 3.
+        с пунктом. `delete_item` пока заглушка: её обработчик появится на
+        задаче 6 этапа 3.
         """
         if self._selected_item is not None:
             return (
                 ButtonAction(LABEL_CREATE_CATEGORY, self.create_category),
-                ButtonAction(LABEL_RENAME_ITEM),
+                ButtonAction(LABEL_RENAME_ITEM, self.rename_item),
                 ButtonAction(LABEL_DELETE_ITEM),
             )
         if self._selected_view is not None:
@@ -2719,7 +2736,8 @@ class ChecklistApp:
         ``scroll_to_end`` — для новой категории: она добавлена в конец, и её
         надо доскроллить, чтобы поле было видно. Новый пункт может быть и не
         последним на экране, поэтому для него прокрутку делает сам Flutter:
-        поле в фокусе он показывает на экране.
+        поле в фокусе он показывает на экране. Переименовываемый элемент
+        (категория или пункт) уже выделен на экране — прокрутка ему не нужна.
         """
         field = self._begin_title_input(view, initial)
         if scroll_to_end:

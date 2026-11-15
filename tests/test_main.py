@@ -3351,3 +3351,162 @@ def test_drag_starts_when_only_visible_rows_are_measured():
     assert app._item_drag is not None
     assert app._item_drag.target == (0, 0)
     assert first.panel.height == 0
+
+
+# Переименование пункта — задача 5 этапа 3.
+
+
+def select_item(app, view):
+    """Выделяет пункт так же, как пользователь: долгим нажатием."""
+    asyncio.run(app._on_item_long_press(view))
+
+
+def test_pencil_button_renames_item_with_item_selection():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    select_item(app, first)
+
+    assert app.pencil_button.on_click == app.rename_item
+    assert app.pencil_button.content.semantics_label == main.LABEL_RENAME_ITEM
+
+
+def test_rename_item_opens_input_with_previous_title(monkeypatch):
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    select_item(app, first)
+    focused = fake_focus(monkeypatch)
+
+    asyncio.run(app.rename_item(None))
+
+    # Текст пункта заменён полем ввода, в поле — прежнее название пункта.
+    assert app._editing_view is first
+    assert first.input is first.title_slot.content
+    assert first.input.value == "Молоко"
+    assert first.input.hint_text == domain.DEFAULT_ITEM_TITLE
+    assert first.input.text_style == main.ITEM_TITLE_STYLE
+    assert focused == [first.input]
+    # Пока идёт ввод, кнопки скрыты, «назад» не закрывает приложение.
+    assert app.button_area.visible is False
+    assert page.views[0].can_pop is False
+    assert page.updates >= 1
+
+
+def test_rename_item_without_item_selection_does_nothing(monkeypatch):
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    focused = fake_focus(monkeypatch)
+
+    asyncio.run(app.rename_item(None))
+
+    assert app._editing_view is None
+    assert first.title_slot.content is first.title_text
+    assert focused == []
+
+
+def test_rename_item_is_ignored_while_the_category_title_is_edited(monkeypatch):
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    select_item(app, first)
+    field = app._begin_title_input(home, home.title)
+    focused = fake_focus(monkeypatch)
+
+    asyncio.run(app.rename_item(None))
+
+    assert app._editing_view is home
+    assert home.input is field
+    assert focused == []
+
+
+def test_rename_item_saves_title_and_keeps_item_selection():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    select_item(app, first)
+    field = app._begin_title_input(first, first.title)
+
+    field.value = "  Молоко и хлеб  "
+    asyncio.run(app._finish_title_input(first))
+
+    assert first.title == "Молоко и хлеб"
+    assert first.title_text.value == "Молоко и хлеб"
+    assert first.title_slot.content is first.title_text
+    assert app.storage.item_titles == [(first.item.id, "Молоко и хлеб")]
+    # Выделение пункта пережило переименование: слоты остались прежними.
+    assert app._selected_item is first
+    assert first.selected is True
+    assert app._selected_view is None
+    assert app.button_area.visible is True
+    assert app.pencil_button.on_click == app.rename_item
+    assert app.pencil_button.visible is True
+    assert app.trash_button.visible is True
+    assert page.views[0].can_pop is False
+
+
+def test_rename_item_with_unchanged_title_does_not_write_to_storage():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    select_item(app, first)
+    field = app._begin_title_input(first, first.title)
+
+    field.value = " Молоко "
+    asyncio.run(app._finish_title_input(first))
+
+    assert app.storage.item_titles == []
+    assert first.title == "Молоко"
+
+
+def test_rename_item_with_empty_title_uses_default_name():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    select_item(app, first)
+    field = app._begin_title_input(first, first.title)
+
+    field.value = "   "
+    asyncio.run(app._finish_title_input(first))
+
+    assert first.title == "Пункт"
+    assert app.storage.item_titles == [(first.item.id, "Пункт")]
+
+
+def test_rename_item_write_error_keeps_previous_title_and_reports():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    select_item(app, first)
+    app.storage.fail_item_title = True
+    field = app._begin_title_input(first, first.title)
+
+    field.value = "Хлеб"
+    asyncio.run(app._finish_title_input(first))
+
+    # Коммит до UI: при ошибке строка показывает прежнее название.
+    assert first.title == "Молоко"
+    assert first.title_text.value == "Молоко"
+    assert first.title_slot.content is first.title_text
+    assert page.messages == ["Не удалось сохранить название"]
+    assert app._selected_item is first
+
+
+def test_back_while_renaming_item_saves_title_and_keeps_selection():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    select_item(app, first)
+    field = app._begin_title_input(first, first.title)
+    field.value = "Хлеб"
+
+    asyncio.run(app._on_confirm_pop(None))
+
+    assert first.title == "Хлеб"
+    assert app.storage.item_titles == [(first.item.id, "Хлеб")]
+    assert app._selected_item is first
+    # False — не выходить из приложения.
+    assert page.views[0].pops == [False]
+
+
+def test_tap_outside_item_rename_saves_and_keeps_item_selection():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    select_item(app, first)
+    field = app._begin_title_input(first, first.title)
+    field.value = "Хлеб"
+
+    # Нажатие вне поля: ввод завершается, введённое название сохраняется.
+    asyncio.run(field.on_tap_outside(None))
+    assert first.title == "Хлеб"
+    assert app._tap_ended_input is True
+
+    # Отпускание того же тапа по списку выделение пункта не снимает.
+    app.category_area.content.on_tap(None)
+
+    assert app._selected_item is first
+    assert first.selected is True
+    assert home.selected is False
+    assert app._tap_ended_input is False
