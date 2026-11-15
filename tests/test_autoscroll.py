@@ -10,6 +10,7 @@ from support import (
     drag_category_to_screen,
     drag_item_to,
     drag_to_global,
+    drop_category,
     drop_item,
     item,
     make_app,
@@ -360,6 +361,44 @@ def test_user_scroll_finishes_a_lost_item_drag():
     assert first.panel.height is None
     # Отменять нечего: список ведёт палец, а не оставшаяся анимация.
     assert not any(handler is app._cancel_scroll for handler, _ in page.tasks)
+
+
+def test_scroll_events_are_rare_outside_a_drag():
+    """В покое прокрутка почти не тревожит Python, в drag — тревожит часто.
+
+    Каждое событие `on_scroll` уходит из клиента в Python. На инерционной
+    прокрутке (палец уже отпущен) позиция списка не нужна, поэтому события
+    редкие; при перетаскивании по ним пересчитывается место вставки и
+    продолжается проход автопрокрутки.
+    """
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    measure(app)
+    assert app.category_list.scroll_interval == theme.SCROLL_INTERVAL_IDLE
+
+    pick_up_item(first)
+
+    assert app.category_list.scroll_interval == theme.SCROLL_INTERVAL_DRAG
+
+    drop_item(app, first, 0)
+
+    assert app._item_drag is None
+    assert app.category_list.scroll_interval == theme.SCROLL_INTERVAL_IDLE
+
+
+def test_category_drag_switches_the_scroll_interval():
+    """Перетаскивание категории тоже включает частые события прокрутки."""
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    measure(app)
+    assert app.category_list.scroll_interval == theme.SCROLL_INTERVAL_IDLE
+
+    pick_up_category(app, home)
+
+    assert app.category_list.scroll_interval == theme.SCROLL_INTERVAL_DRAG
+
+    drop_category(app, home, 0)
+
+    assert app._category_drag is None
+    assert app.category_list.scroll_interval == theme.SCROLL_INTERVAL_IDLE
 
 
 def test_item_drag_keeps_all_list_rows_built():

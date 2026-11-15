@@ -35,6 +35,7 @@ from ui.theme import (
     ITEMS_BOX_PADDING,
     LIST_BOTTOM_PADDING,
     LIST_PADDING,
+    SCROLL_INTERVAL_IDLE,
 )
 
 if TYPE_CHECKING:
@@ -340,6 +341,10 @@ def create_category_list() -> ft.ListView:
         # (auto_scroll прокручивает к концу при каждой смене содержимого).
         build_controls_on_demand=False,
         auto_scroll=False,
+        # В покое позиция прокрутки нужна только к началу перетаскивания,
+        # поэтому события прокрутки приходят редко и не нагружают канал.
+        # Во время drag частоту поднимает `ChecklistApp._set_scroll_interval`.
+        scroll_interval=SCROLL_INTERVAL_IDLE,
     )
 
 

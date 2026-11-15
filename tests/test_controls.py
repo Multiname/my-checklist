@@ -63,6 +63,9 @@ def test_category_list_scrolls_full_screen_above_button_area():
     assert category_list.build_controls_on_demand is False
     assert category_list.auto_scroll is False
     assert category_list.padding.bottom >= theme.BUTTON_AREA_HEIGHT
+    # В покое позиция прокрутки нужна редко: события не отнимают кадры.
+    assert category_list.scroll_interval == theme.SCROLL_INTERVAL_IDLE
+    assert theme.SCROLL_INTERVAL_IDLE > theme.SCROLL_INTERVAL_DRAG
 
 
 def test_category_input_shows_keyboard_and_commits_on_focus_loss():

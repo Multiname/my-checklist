@@ -56,6 +56,8 @@ from ui.theme import (
     LABEL_RENAME_ITEM,
     LIST_BOTTOM_PADDING,
     LIST_PADDING,
+    SCROLL_INTERVAL_DRAG,
+    SCROLL_INTERVAL_IDLE,
 )
 from ui.views import CategoryView, ItemView, TitledView
 
@@ -82,6 +84,9 @@ class ChecklistApp:
         # Прокрутка нужна автопрокрутке при перетаскивании: по её событиям
         # видно, насколько содержимое уехало под пальцем.
         self.category_list.on_scroll = self._on_scroll
+        # Текущая частота событий прокрутки: в покое редкая, при перетаскивании
+        # частая (см. `_set_scroll_interval`).
+        self._scroll_interval = SCROLL_INTERVAL_IDLE
         self.category_area = create_category_area(
             self.category_list, self._on_tap, self._on_tap_cancel
         )
@@ -948,6 +953,9 @@ class ChecklistApp:
         self._pointer_y = global_position.y
         # Пока категория перетаскивается, кнопки скрыты целиком.
         self._dragging = True
+        # Драгу нужна частая позиция прокрутки: по ней пересчитывается место
+        # вставки и продолжается проход автопрокрутки.
+        self._set_scroll_interval(SCROLL_INTERVAL_DRAG)
         view.collapse()
         drag.proxy = create_category_proxy(view, drag.width)
         # Категория едет в своём столбце: прокси встаёт ровно над списком
@@ -1044,6 +1052,9 @@ class ChecklistApp:
         drag.view.restore()
         # Кеш возвращается к обычному: список снова строит только видимое.
         self.category_list.cache_extent = None
+        # В покое позиция прокрутки нужна редко: события не должны отнимать
+        # кадры у инерционной прокрутки.
+        self._set_scroll_interval(SCROLL_INTERVAL_IDLE)
         self._dragging = False
         self._apply_selection()
 
@@ -1204,6 +1215,8 @@ class ChecklistApp:
         )
         self._item_drag = drag
         self._pointer_y = global_position.y
+        # Пока идёт drag, позиция прокрутки нужна часто (см. _on_scroll).
+        self._set_scroll_interval(SCROLL_INTERVAL_DRAG)
         # Строка сворачивается, а на её место встают зазор и прокси. Зазор
         # занимает целый слот строки, поэтому пункты не сдвигаются.
         view.collapse()
@@ -1332,6 +1345,9 @@ class ChecklistApp:
         drag.view.restore()
         # Кеш возвращается к обычному: список снова строит только видимое.
         self.category_list.cache_extent = None
+        # В покое позиция прокрутки нужна редко: события не должны отнимать
+        # кадры у инерционной прокрутки.
+        self._set_scroll_interval(SCROLL_INTERVAL_IDLE)
         self._apply_selection()
 
     def _place_gap(self, drag: ItemDrag, target: tuple[int, int]) -> None:
@@ -1401,6 +1417,26 @@ class ChecklistApp:
         return True
 
     # Прокрутка и автопрокрутка у краёв экрана.
+
+    def _set_scroll_interval(self, interval: int) -> None:
+        """Меняет частоту событий прокрутки: редкую в покое, частую в drag.
+
+        Каждое событие `on_scroll` клиент отправляет в Python, и на обычной
+        прокрутке — особенно инерционной, когда палец уже отпущен, — эти
+        сообщения только отнимают кадры у анимации. Позиция списка нужна лишь
+        к началу перетаскивания и во время него, поэтому в покое события
+        приходят редко (`SCROLL_INTERVAL_IDLE`), а пока идёт drag — часто
+        (`SCROLL_INTERVAL_DRAG`): по ним пересчитывается место вставки и
+        продолжается проход автопрокрутки.
+
+        Новое значение уходит клиенту ближайшим `page.update()` — тем же, что
+        показывает прокси и скрывает кнопки, — поэтому отдельных обновлений
+        экрана правка не добавляет.
+        """
+        if interval == self._scroll_interval:
+            return
+        self._scroll_interval = interval
+        self.category_list.scroll_interval = interval
 
     def _on_scroll(self, event: ft.OnScrollEvent) -> None:
         """Список прокрутился: место вставки пересчитывается под пальцем.

@@ -26,7 +26,7 @@
 | Каскад пунктов | [feature-storage.md](features/feature-storage.md) | [удаление вместе с категорией](#удаление-пунктов-вместе-с-категорией) | `storage.Storage.delete_category()` | 3/7 |
 | Отметка пункта | [feature-item.md](features/feature-item.md) | [отметка пункта](#отметка-пункта) | `app.toggle_item_checked()`, `controls.create_checkbox_blocker()` | 3/8 |
 | Хранение | [feature-storage.md](features/feature-storage.md) | [хранение данных](#хранение-данных) | `src/storage.py` | 2/2 |
-| Прокрутка | [feature-scroll.md](features/feature-scroll.md) | [автопрокрутка](#автопрокрутка-при-перетаскивании) | `app._on_scroll()`, `app._update_autoscroll()`, `app._scroll_to_edge()` | 2/4, 3/4 |
+| Прокрутка | [feature-scroll.md](features/feature-scroll.md) | [прокрутка списка](#прокрутка-списка), [автопрокрутка](#автопрокрутка-при-перетаскивании) | `app._on_scroll()`, `app._set_scroll_interval()`, `app._update_autoscroll()`, `app._scroll_to_edge()` | 2/4, 3/4 |
 
 ## Структура проекта
 | Путь | Назначение |
@@ -50,6 +50,9 @@
 | `tests/support.py` | общие фейки и помощники тестов: страница, хранилище, события жестов |
 | `tools/run_on_device.ps1` | запуск приложения на телефоне по USB: toolchain, adb, `flet debug android` |
 | `tools/run_on_device.cmd` | обёртка для обхода политики запуска сценариев PowerShell |
+| `tools/measure_scroll.ps1` | замер плавности инерционной прокрутки на устройстве: флинги и статистика кадров |
+| `tools/scroll_stats.py` | разбор `dumpsys SurfaceFlinger --latency`: частота кадров и поздние кадры |
+| `tools/seed_checklist.py` | seed-БД для замеров: 15 категорий по 5 пунктов |
 | `.agents/skills/run-on-device/SKILL.md` | скилл агента: как запускать приложение на телефоне |
 | `docs/` | документация проекта |
 | `README.md` | краткое описание и команды запуска |
@@ -87,6 +90,7 @@
 | `_dragging`, `_item_drag`, `_category_drag` | состояния перетаскивания |
 | `_gap_category`, `_pointer_y` | где стоит зазор и где палец |
 | `_scroll_pixels`, `_viewport`, `_max_scroll_extent` | параметры прокрутки, приходящие с `on_scroll` |
+| `_scroll_interval` | текущая частота событий прокрутки: редкая в покое, частая в drag |
 | `_keyboard_open`, `_tap_ended_input` | признаки ввода названия (см. «Ввод названия») |
 
 Пока идёт ввод названия или перетаскивание, `button_area` скрыта целиком: кнопки не
@@ -625,6 +629,40 @@ Blackline) даёт префикс Android-идентификатора, `produc
   раз из `src/main.py` и ничего не делает при повторном вызове. Убрать его можно,
   когда ошибка исправлена в flet.
 
+## Прокрутка списка
+Прокрутку рисует клиент: `ft.ListView` сам анимирует инерцию, Python в кадрах не
+участвует. Сервер узнаёт о прокрутке только событием `on_scroll`
+(`ChecklistApp._on_scroll()`), а каждое событие — сообщение из клиента в Python.
+В покое эта позиция не нужна: она используется только при перетаскивании — по
+ней считается место вставки и продолжается проход автопрокрутки. Поэтому
+события прокрутки троттлятся: `ListView.scroll_interval` равен
+`SCROLL_INTERVAL_IDLE` (250 мс) в покое и `SCROLL_INTERVAL_DRAG` (10 мс), пока
+идёт перетаскивание. Переключает `_set_scroll_interval()`: в начале drag
+(`_on_category_drag_start()`, `_on_item_drag_start()`) и в конце
+(`_finish_category_drag()`, `_finish_item_drag()`). Отдельных обращений к
+экрану правка не добавляет — значение уходит тем же `page.update()`, что
+показывает прокси и прячет кнопки.
+
+- **Почему позиция к началу drag успевает дойти.** Долгое нажатие занимает
+  стандартные ≈500 мс, а касание останавливает инерцию: клиент присылает
+  `end` с точными `pixels`, и `_scroll_pixels` к началу перетаскивания уже
+  равен настоящей позиции. Проверено на устройстве: прокси встаёт ровно на
+  панель и после флинга (см. [Verification.md](Verification.md), «Замеры
+  прокрутки»).
+- **Почему не отключать событие совсем.** Спросить позицию у клиента нельзя:
+  `ListView` умеет только `scroll_to()`, а он двигает список, а не сообщает
+  координаты. Редкие события держат `_scroll_pixels` свежими без запросов.
+- **Что даёт.** До правки событие приходило на каждый кадр инерции (у
+  `on_scroll` по умолчанию `scroll_interval` = 10 мс): на длинном списке
+  прокрутка подтормаживала, потому что каждое сообщение обрабатывает Python.
+  После правки частота инерционной прокрутки на устройстве выросла с 75–80 до
+  ≈105 кадр/с, а поздних кадров стало в 3–4 раза меньше (числа и методика —
+  [Verification.md](Verification.md), «Замеры прокрутки»).
+- **Release ещё ровнее.** В release-сборке клиент не пишет отладочные логи, а
+  Dart скомпилирован заранее: 115 кадр/с и 2% поздних кадров, ни одного
+  интервала длиннее 50 мс. Остаточные подтормаживания debug-сборки — цена
+  режима отладки, а не кода приложения.
+
 ## Хранение данных
 Слой — `src/storage.py`, правила схемы и операций —
 [features/feature-storage.md](features/feature-storage.md).
@@ -677,11 +715,12 @@ Blackline) даёт префикс Android-идентификатора, `produc
 |---|---|
 | Запуск на десктопе (обычный терминал) | `.venv\Scripts\flet.exe run` из корня проекта |
 | Запуск в песочнице DSH | `$env:USERPROFILE = "$PWD\.flet\home"` перед запуском — см. [Environment.md](Environment.md) |
-| Тесты | `.venv\Scripts\python.exe -m pytest` — 275 тестов |
+| Тесты | `.venv\Scripts\python.exe -m pytest` — 280 тестов |
 | Список тестов | `.venv\Scripts\python.exe -m pytest --collect-only -q` |
 | Сборка и запуск на телефоне | `cmd /c "tools\run_on_device.cmd -DeviceId <id>"` — см. ниже |
+| Замер плавности прокрутки | `powershell -ExecutionPolicy Bypass -File tools\measure_scroll.ps1 -Label before` — данные и числа в [Verification.md](Verification.md), «Замеры прокрутки» |
 
-Тесты (`pytest`, `pythonpath = ["src", "tests"]`, 275 штук) покрывают домен,
+Тесты (`pytest`, `pythonpath = ["src", "tests"]`, 280 штук) покрывают домен,
 хранилище и экран. Файлы повторяют модули `ui`, общие фейки — в `support.py`:
 
 | Файл | Что проверяет |
