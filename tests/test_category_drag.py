@@ -9,6 +9,7 @@ from support import (
     drag_category_to,
     drag_category_to_screen,
     drop_category,
+    item,
     long_press_start_event,
     make_app,
     make_app_with_items,
@@ -175,6 +176,69 @@ def test_category_drag_puts_the_gap_at_the_end_of_the_list():
     assert drag.target == 2
     # Место — конец списка: зазор становится нижним отступом последней панели.
     assert rest.item.margin == ft.Margin.only(bottom=drag.slot_height)
+
+
+def test_dragged_category_never_gets_a_margin():
+    """Поднятая категория не получает отступ ни на одном месте вставки.
+
+    `margin` клиент применяет к контейнеру, пересоздавая поддерево элемента
+    вместе с распознавателем жеста: перетаскивание обрывалось бы на первом же
+    обновлении экрана (на устройстве панель замирала, а отпускание пальца не
+    доходило до приложения). Поэтому зазор всегда достаётся соседней категории.
+    """
+    for index in range(3):
+        # Свежий список на каждую категорию: после отпускания порядок меняется, и
+        # проверяемая категория перестала бы быть последней.
+        page, app, haptic, views = make_app("Дом", "Работа", "Отдых")
+        measure(app)
+        dragged = views[index]
+        pick_up_category(app, dragged)
+
+        for model_y in (-1000, 20, 120, 500, 10_000):
+            drag_category_to(app, dragged, model_y)
+
+            assert dragged.item.margin is None
+
+
+def test_last_category_gap_goes_to_the_previous_one():
+    """Зазор последней категории — нижний отступ предыдущей, а не её самой.
+
+    Место в конце списка раньше отдавалось `self.views[-1]`, то есть самой
+    поднятой панели, если она последняя: жест перетаскивания обрывался, и
+    категория не двигалась. Раскладка от такой замены та же — свёрнутая панель
+    места не занимает.
+    """
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    measure(app)
+    pick_up_category(app, work)
+    drag = app._category_drag
+
+    assert drag.source == 1
+    assert work.item.margin is None
+    assert home.item.margin == ft.Margin.only(bottom=drag.slot_height)
+
+
+def test_last_category_drag_reorders_it_to_the_top():
+    """Вторая категория перетаскивается наверх и сохраняется в БД.
+
+    Ровно этот сценарий не работал на устройстве: две категории по два пункта,
+    вторая не двигалась.
+    """
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    work.append_item(item(3, work.category.id, "Отчёт"))
+    work.append_item(item(4, work.category.id, "План", position=1))
+    measure(app)
+    pick_up_category(app, work)
+    drag = app._category_drag
+
+    # Середина «Дома» — 103: палец выше неё ставит категорию перед ним.
+    drag_category_to(app, work, 20)
+    assert drag.target == 0
+    drop_category(app, work, 20)
+
+    assert app.storage.moved == [(work.category.id, 0)]
+    assert [view.title for view in app.views] == ["Работа", "Дом"]
+    assert all(view.item.margin is None for view in app.views)
 
 
 def test_category_drag_restores_everything_after_drop():
