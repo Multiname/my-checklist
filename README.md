@@ -57,6 +57,17 @@ cmd /c "tools\run_on_device.cmd -DeviceId <id> -Attach"
 Подробности — [docs/Environment.md](docs/Environment.md), скилл агента —
 [.agents/skills/run-on-device/SKILL.md](.agents/skills/run-on-device/SKILL.md).
 
+## Release-сборка
+
+```powershell
+cmd /c "tools\run_on_device.cmd -DeviceId <id> -Release"
+```
+
+Сборка подписывается ключом из `.secrets\key.properties` (в git не попадает) и
+ставится на телефон. APK для раздачи — `dist\My-checklist-1.0.0.apk` вместе с
+SHA-256. Настройка ключа и проверка подписи — [docs/Environment.md](docs/Environment.md),
+«Подпись release-сборки».
+
 ## Тесты
 
 ```powershell

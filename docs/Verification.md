@@ -62,6 +62,27 @@
   Так выглядел отчёт «карандаш ничего не делает» — APK был собран до появления
   обработчика `rename_item`.
 
+## Release 1.0.0
+Собрана командой `tools\run_on_device.cmd -Release` (подпись берётся из
+`.secrets\key.properties`, см. [Environment.md](Environment.md), «Подпись
+release-сборки»). Артефакт — `dist\My-checklist-1.0.0.apk`, копия из
+`build\flutter\build\app\outputs\flutter-apk\app-release.apk`.
+
+| Что | Значение |
+|---|---|
+| Размер / SHA-256 APK | 83 498 045 байт / `809a99c002a1d9be47a243d0b9ac5e3941266c4b4a91963551ca641f76d6587e` |
+| Версия | `versionName 1.0.0`, `versionCode 1` |
+| SDK | minSdk 24, targetSdk 36 |
+| Подпись | `CN=My checklist, OU=Blackline, O=Blackline, C=RU`, SHA-256 `1C:4E:74:…:AC:83:4E`; `apksigner verify` подтверждает release-сертификат, а не debug |
+| Установка | `adb install` поверх прежней сборки не прошёл (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`): у неё была другая подпись. Скрипт удалил старое приложение, поставил новое и запустил; данные прежней установки при этом потеряны |
+| Холодный старт | 140 мс после `force-stop`; 349 мс на первом запуске сразу после `adb install` |
+| Манифест release | `ACCESS_NETWORK_STATE` и `com.blackline.my_checklist.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`; `INTERNET` и `RECORD_AUDIO` отсутствуют |
+
+На устройстве проверены запуск, пустой экран после чистой установки и открытие
+поля ввода категории по «+» (скриншоты — `.tmp\release-1.0.0-final.png`,
+`.tmp\release-1.0.0-add.png`). Остальные сценарии на release-сборке не
+прогонялись: приёмы и ожидаемые числа — в таблице ниже, они сняты на debug.
+
 ## Что проверено по функциям
 | Функция | Подтверждено на устройстве |
 |---|---|

@@ -194,6 +194,68 @@ function Initialize-Environment {
     $env:PIP_DEFAULT_TIMEOUT = '60'
 }
 
+function Initialize-ReleaseSigning {
+    <#
+    .SYNOPSIS
+        Подставляет ключ подписи release-сборки из `.secrets\key.properties`.
+
+    .DESCRIPTION
+        Release-сборка, которую отдают пользователям, не должна подписываться
+        отладочным ключом Android. flet читает параметры подписи из переменных
+        окружения `FLET_ANDROID_SIGNING_KEY_*`; здесь они берутся из локального
+        файла `.secrets\key.properties` (каталог в git не попадает).
+
+        Путь `storeFile` в этом файле может быть относительным — он считается
+        от корня проекта. Если ключа нет, release-сборка останавливается: молча
+        подписать её debug-ключом хуже, чем не собрать.
+    #>
+    if (-not $Release) {
+        return
+    }
+    if ($env:FLET_ANDROID_SIGNING_KEY_STORE) {
+        return
+    }
+
+    $propsFile = Join-Path $Root '.secrets\key.properties'
+    if (-not (Test-Path -LiteralPath $propsFile)) {
+        throw "Для release-сборки нет ключа подписи: $propsFile. Создайте release-keystore и key.properties (см. docs\Environment.md, «Подпись release-сборки»)."
+    }
+
+    $props = @{}
+    foreach ($line in Get-Content -LiteralPath $propsFile) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith('#')) {
+            continue
+        }
+        $separator = $trimmed.IndexOf('=')
+        if ($separator -lt 1) {
+            continue
+        }
+        $props[$trimmed.Substring(0, $separator).Trim()] = $trimmed.Substring($separator + 1).Trim()
+    }
+
+    foreach ($name in @('storeFile', 'keyAlias', 'storePassword', 'keyPassword')) {
+        if (-not $props[$name]) {
+            throw "В $propsFile нет поля $name."
+        }
+    }
+
+    $store = $props['storeFile']
+    if (-not [System.IO.Path]::IsPathRooted($store)) {
+        $store = Join-Path $Root $store
+    }
+    $store = [System.IO.Path]::GetFullPath($store)
+    if (-not (Test-Path -LiteralPath $store)) {
+        throw "Ключ подписи не найден: $store (поле storeFile в $propsFile)."
+    }
+
+    $env:FLET_ANDROID_SIGNING_KEY_STORE = $store
+    $env:FLET_ANDROID_SIGNING_KEY_STORE_PASSWORD = $props['storePassword']
+    $env:FLET_ANDROID_SIGNING_KEY_PASSWORD = $props['keyPassword']
+    $env:FLET_ANDROID_SIGNING_KEY_ALIAS = $props['keyAlias']
+    Write-Host "Release подписывается ключом: $store (alias $($props['keyAlias']))" -ForegroundColor Cyan
+}
+
 function Get-RequiredFlutterVersion {
     <#
     .SYNOPSIS
@@ -678,6 +740,7 @@ function Resolve-DeviceId {
 
 # --- 1. Окружение -----------------------------------------------------------
 Initialize-Environment
+Initialize-ReleaseSigning
 
 if (-not (Test-Path $FletExe)) {
     throw "Не найден flet: $FletExe. Активируйте окружение: .venv\Scripts\Activate.ps1"

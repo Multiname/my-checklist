@@ -62,9 +62,38 @@ $env:USERPROFILE = "$PWD\.flet\home"
 |---|---|
 | `build\flutter` | сгенерированный Flutter-проект |
 | `build\flutter\build\app\outputs\flutter-apk\app-debug.apk` | собранный debug-APK |
+| `build\flutter\build\app\outputs\flutter-apk\app-release.apk` | собранный release-APK |
+| `dist\My-checklist-<версия>.apk` | release-APK для раздачи (не в git) |
 | `build\python-app`, `build\site-packages\<abi>` | упакованный Python-код приложения и зависимости по ABI |
 
-`build\` и `.flet\` в git не попадают.
+`build\` и `.flet\` в git не попадают. APK из `dist\` тоже: `*.apk` в
+`.gitignore`, файл лежит в проекте для загрузки в GitHub Release.
+
+### Подпись release-сборки
+Release-сборка подписывается собственным ключом, а не отладочным. Ключ и пароли
+лежат в `.secrets\` — каталог в git не попадает:
+
+| Файл | Что внутри |
+|---|---|
+| `.secrets\my-checklist-release.jks` | keystore, alias `my-checklist`, RSA 4096, срок до 2054 года |
+| `.secrets\key.properties` | `storeFile`, `keyAlias`, `storePassword`, `keyPassword` |
+
+`tools\run_on_device.cmd -Release` читает `key.properties` и передаёт flet
+переменные `FLET_ANDROID_SIGNING_KEY_*`; относительный `storeFile` считается от
+корня проекта. Без `key.properties` release-сборка останавливается, а не
+подписывается debug-ключом. Проверить подпись готового APK:
+
+```powershell
+$env:JAVA_HOME = "$PWD\.flet\home\java\17.0.13+11"
+& .flet\home\Android\sdk\build-tools\35.0.0\apksigner.bat verify --print-certs `
+    build\flutter\build\app\outputs\flutter-apk\app-release.apk
+```
+
+Сертификат release-ключа: `CN=My checklist, OU=Blackline, O=Blackline, C=RU`,
+SHA-256 `1C:4E:74:F3:23:36:8C:59:F7:4B:D0:E7:7E:CE:DC:82:EC:47:3B:C5:09:BA:75:82:CF:88:F1:20:32:AC:83:4E`.
+Ключ нужно сохранить вне проекта: с другой подписью Android не обновит уже
+установленное приложение, а восстановить ключ нельзя.
+
 
 ### Особенности окружения, без которых сборка не идёт
 - **Flutter ставится не flet, а скриптом.** Встроенный распаковщик flet

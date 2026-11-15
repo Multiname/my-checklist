@@ -118,7 +118,7 @@ cmd /c "tools\run_on_device.cmd -DeviceId <id> -Attach"
 | `-DeviceId <id>` | ID устройства из `adb devices`; обязателен при нескольких телефонах |
 | `-SetupOnly` | только toolchain и список устройств, без сборки |
 | `-Attach` | остаться подключённым к устройству: логи и hot reload |
-| `-Release` | release-сборка вместо debug (дольше) |
+| `-Release` | release-сборка вместо debug (дольше); подписывается ключом из `.secrets\key.properties`, без него сборка останавливается |
 | `-WaitSeconds <n>` | сколько ждать устройство (по умолчанию 180) |
 | `-VerifySeconds <n>` | сколько ждать запуска приложения после установки (по умолчанию 60) |
 | остальные аргументы | передаются в `flet debug` (например `--route=/items`) |

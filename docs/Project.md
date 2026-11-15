@@ -824,7 +824,14 @@ flet 1.1.2 сам патчит страницу **после каждого со
 cmd /c "tools\run_on_device.cmd -SetupOnly"                    # toolchain и список устройств
 cmd /c "tools\run_on_device.cmd -DeviceId 3B161E00W5600000"    # сборка, установка, запуск
 cmd /c "tools\run_on_device.cmd -DeviceId 3B161E00W5600000 -Attach"  # логи и hot reload
+cmd /c "tools\run_on_device.cmd -DeviceId 3B161E00W5600000 -Release" # release для раздачи
 ```
+
+С `-Release` скрипт берёт ключ подписи из `.secrets\key.properties` и передаёт
+flet переменные `FLET_ANDROID_SIGNING_KEY_*`; без ключа release-сборка
+останавливается. Артефакт — `build\flutter\build\app\outputs\flutter-apk\app-release.apk`,
+для раздачи он копируется в `dist\My-checklist-<версия>.apk`. Подробности —
+[Environment.md](Environment.md), «Подпись release-сборки».
 
 Скрипт сверяет SHA256 Flutter-архива и шаблона flet, а перед сборкой чистит
 `RECORD_AUDIO` из debug/profile-манифестов. `INTERNET` и `RECORD_AUDIO`

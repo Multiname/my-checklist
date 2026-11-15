@@ -19,6 +19,7 @@ env/
 pytest-of-*/
 
 # Секреты и ключи подписи
+.secrets/
 .env
 .env.*
 !.env.example
