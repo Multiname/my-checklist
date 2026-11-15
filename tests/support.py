@@ -78,6 +78,13 @@ class FakeHaptic:
 
 
 class FakeStorage:
+    """Хранилище в памяти: повторяет правила настоящего, но без SQLite.
+
+    Правила, от которых зависит экран, повторяются явно: нормализация названий,
+    каскад удаления категории, порядок в списках и явная запись отметки. Иначе
+    тест экрана проходил бы и на поведении, которого у настоящего хранилища нет.
+    """
+
     def __init__(self):
         self.saved = []
         self.moved = []
@@ -85,20 +92,21 @@ class FakeStorage:
         self.deleted = []
         self.deleted_items = []
         self.checked = []
-        self.categories = []
+        self.created_categories = []
         self.created_items = []
         self.item_titles = []
+        self.categories = []
         self.items = []
         self.fail_move = False
         self.fail_move_item = False
         self.fail_save = False
         self.fail_delete = False
         self.fail_delete_item = False
+        self.fail_create_category = False
         self.fail_create_item = False
         self.fail_item_title = False
         self.fail_check = False
         self.recovered_backup = None
-        self._next_item_id = 1
 
     def list_categories(self):
         return list(self.categories)
@@ -106,10 +114,32 @@ class FakeStorage:
     def list_items(self):
         return list(self.items)
 
+    def create_category(self, title=domain.DEFAULT_CATEGORY_TITLE):
+        """Повторяет правила настоящего хранилища: конец списка и нормализация."""
+        self.created_categories.append(title)
+        if self.fail_create_category:
+            raise storage.StorageError("нет места")
+        category = domain.Category(
+            id=max((item.id for item in self.categories), default=0) + 1,
+            title=domain.normalize_title(title, domain.DEFAULT_CATEGORY_TITLE),
+            position=len(self.categories),
+        )
+        self.categories.append(category)
+        return category
+
     def set_category_title(self, category_id, title):
         self.saved.append((category_id, title))
         if self.fail_save:
             raise storage.StorageError("нет места")
+        title = domain.normalize_title(title, domain.DEFAULT_CATEGORY_TITLE)
+        # Название хранится в БД: список категорий в памяти отражает запись,
+        # как и у настоящего хранилища.
+        self.categories = [
+            domain.Category(id=item.id, title=title, position=item.position)
+            if item.id == category_id
+            else item
+            for item in self.categories
+        ]
         return title
 
     def move_category(self, category_id, new_position):
@@ -127,12 +157,14 @@ class FakeStorage:
         ]
 
     def delete_category(self, category_id):
-        """Повторяет правила настоящего хранилища: удаление и порядок без дыр."""
+        """Повторяет правила настоящего хранилища: каскад, удаление и порядок без дыр."""
         self.deleted.append(category_id)
         if self.fail_delete:
             raise storage.StorageError("нет места")
         ids = [item.id for item in self.categories]
         self.categories.pop(ids.index(category_id))
+        # Пункты удалённой категории уходят каскадом (ON DELETE CASCADE).
+        self.items = [item for item in self.items if item.category_id != category_id]
         return [
             domain.Category(id=item.id, title=item.title, position=position)
             for position, item in enumerate(self.categories)
@@ -144,13 +176,12 @@ class FakeStorage:
         if self.fail_create_item:
             raise storage.StorageError("нет места")
         item = domain.Item(
-            id=self._next_item_id,
+            id=max((item.id for item in self.items), default=0) + 1,
             category_id=category_id,
-            title=title,
+            title=domain.normalize_title(title, domain.DEFAULT_ITEM_TITLE),
             is_checked=False,
             position=sum(1 for item in self.items if item.category_id == category_id),
         )
-        self._next_item_id += 1
         self.items.append(item)
         return item
 
@@ -158,6 +189,19 @@ class FakeStorage:
         self.item_titles.append((item_id, title))
         if self.fail_item_title:
             raise storage.StorageError("нет места")
+        title = domain.normalize_title(title, domain.DEFAULT_ITEM_TITLE)
+        self.items = [
+            domain.Item(
+                id=item.id,
+                category_id=item.category_id,
+                title=title,
+                is_checked=item.is_checked,
+                position=item.position,
+            )
+            if item.id == item_id
+            else item
+            for item in self.items
+        ]
         return title
 
     def set_item_checked(self, item_id, is_checked):
@@ -350,6 +394,32 @@ def fake_focus(monkeypatch):
     return focused
 
 
+def slot_actions(app):
+    """Действия трёх слотов button_area: подпись, обработчик и видимость.
+
+    Один снимок вместо восьми отдельных assert: слоты постоянные, и важно не
+    только что действие нужное, но и что два других слота показывают то же, что
+    и раньше.
+    """
+    return [
+        (button.content.semantics_label, button.on_click, button.visible)
+        for button in app.button_area.content.controls
+    ]
+
+
+def start_rename(app, view):
+    """Открывает ввод названия с прежним значением — как кнопка «карандаш»."""
+    return app._begin_title_input(view, view.title)
+
+
+def commit_title(app, view, value):
+    """Вводит новое название и завершает ввод — как кнопка действия клавиатуры."""
+    field = start_rename(app, view)
+    field.value = value
+    asyncio.run(app._finish_title_input(view))
+    return field
+
+
 def item(item_id, category_id, title, is_checked=False, position=0):
     return domain.Item(
         id=item_id,
@@ -451,9 +521,15 @@ def drop_item(app, view, model_y):
 
 
 class FakeScrollList:
-    """Список, который запоминает заказы прокрутки вместо обращения к клиенту."""
+    """Список, который запоминает заказы прокрутки вместо обращения к клиенту.
+
+    Реальный `ListView.scroll_to()` требует живого клиента («Control must be
+    added to the page first»), поэтому в тестах список подменяется этой
+    заглушкой: `controls` повторяет список элементов, `calls` — заказы прокрутки.
+    """
 
     def __init__(self, on_scroll=None):
+        self.controls = []
         self.calls = []
         self._on_scroll = on_scroll
 
@@ -464,8 +540,13 @@ class FakeScrollList:
 
 
 def scroll_spy(app, on_scroll=None):
-    """Подменяет список «шпионом»: в тестах клиента нет, `scroll_to` некуда идти."""
+    """Подменяет список «шпионом»: в тестах клиента нет, `scroll_to` некуда идти.
+
+    Содержимое на момент подмены переносится в заглушку: дальше приложение
+    дописывает в `controls` так же, как дописывало бы в настоящий список.
+    """
     fake = FakeScrollList(on_scroll)
+    fake.controls = list(app.category_list.controls)
     app.category_list = fake
     return fake
 

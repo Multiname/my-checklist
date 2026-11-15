@@ -433,3 +433,69 @@ def test_drag_starts_when_only_visible_rows_are_measured():
     assert app._item_drag is not None
     assert app._item_drag.target == (0, 0)
     assert first.panel.height == 0
+
+
+def test_scroll_without_a_drag_only_updates_the_position():
+    """Обычная прокрутка списка — не перетаскивание: место вставки не считается."""
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+
+    app._on_scroll(scroll_event(pixels=120.0))
+
+    assert app._scroll_pixels == 120.0
+    assert app._viewport == 550.0
+    assert app._max_scroll_extent == 1000.0
+    # Ничего не заказывалось: список двигает палец пользователя.
+    assert page.tasks == []
+
+
+def test_item_metrics_uses_fallbacks_until_sizes_arrive():
+    """Пока клиент не прислал размеры, раскладка берётся из шаблона."""
+    page, app, haptic, home, work, first, second = make_app_with_items()
+
+    metrics = app._item_metrics()
+
+    assert metrics == [
+        (
+            theme.CATEGORY_TITLE_HEIGHT_FALLBACK,
+            [theme.ITEM_ROW_HEIGHT_FALLBACK, theme.ITEM_ROW_HEIGHT_FALLBACK],
+        ),
+        (theme.CATEGORY_TITLE_HEIGHT_FALLBACK, []),
+    ]
+
+
+def test_autoscroll_keeps_the_category_target_in_sync():
+    """Прокрутка при перетаскивании категории пересчитывает место вставки.
+
+    Палец стоит на месте, а содержимое уезжает под ним: зазор должен переехать
+    на новую цель, иначе отпускание встанет не туда, где виден зазор.
+    """
+    page, app, haptic, (home, work, rest) = make_app("Дом", "Работа", "Отдых")
+    measure(app)
+    pick_up_category(app, home)
+    drag = app._category_drag
+
+    app._on_scroll(scroll_event(pixels=300.0, max_scroll_extent=700.0))
+
+    # Содержимое уехало на 300 px: палец теперь над концом списка.
+    assert app._scroll_pixels == 300.0
+    assert drag.target == 2
+    assert rest.item.margin == ft.Margin.only(bottom=drag.slot_height)
+
+
+def test_item_drag_finish_cancels_the_running_autoscroll():
+    """Отпускание пункта останавливает проход: иначе список ехал бы без жеста."""
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    measure(app)
+    pick_up_item(first)
+    drag = app._item_drag
+    drag.autoscroll = 1
+    spy = scroll_spy(app)
+
+    app._finish_item_drag()
+
+    assert drag.autoscroll == 0
+    handler, args = page.tasks[-1]
+    assert handler == app._cancel_scroll
+
+    asyncio.run(handler(*args))
+    assert spy.calls == [{"delta": 0}]

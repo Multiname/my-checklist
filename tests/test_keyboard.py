@@ -1,10 +1,7 @@
 """Клавиатура на Android: как приложение узнаёт, что она открыта, и
 как ввод названия завершается её скрытием."""
 
-from support import (
-    FakePage,
-    media,
-)
+from support import FakePage, media
 from ui.app import ChecklistApp
 
 

@@ -29,7 +29,6 @@ from ui.controls import (
 from ui.drag import CategoryDrag, ItemDrag
 from ui.geometry import (
     CategorySpan,
-    DragSpan,
     base_row_top,
     build_category_spans,
     build_drag_spans,

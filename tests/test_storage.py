@@ -345,6 +345,87 @@ def test_corrupt_database_is_quarantined(tmp_path):
         database.close()
 
 
+def test_quarantine_takes_the_wal_side_files_along(tmp_path):
+    """Вместе с файлом БД убираются его WAL-спутники: иначе они остались бы.
+
+    Проверяется сама `_quarantine()`: неудачное открытие повреждённого файла
+    удаляет его `-wal`/`-shm` ещё до карантина, поэтому через `open_storage`
+    этот путь не воспроизводится.
+    """
+    db_path = tmp_path / "app.db"
+    db_path.write_bytes(b"broken")
+    wal = db_path.with_name(db_path.name + "-wal")
+    shm = db_path.with_name(db_path.name + "-shm")
+    wal.write_bytes(b"wal")
+    shm.write_bytes(b"shm")
+
+    backup = storage._quarantine(db_path)
+
+    assert not db_path.exists()
+    assert backup.read_bytes() == b"broken"
+    assert backup.with_name(backup.name + "-wal").read_bytes() == b"wal"
+    assert backup.with_name(backup.name + "-shm").read_bytes() == b"shm"
+
+
+def test_corrupt_schema_version_is_quarantined(tmp_path):
+    """Версия схемы не число — файл испорчен, БД заменяется пустой."""
+    db_path = tmp_path / "app.db"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+            "INSERT INTO meta (key, value) VALUES ('schema_version', 'не число');"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    database = storage.open_storage(db_path)
+    try:
+        assert database.recovered_backup is not None
+        assert database.list_categories() == []
+        assert database.recovered_backup.read_bytes() != b""
+    finally:
+        database.close()
+
+
+def test_meta_table_without_version_counts_as_an_empty_database(tmp_path):
+    """Недописанная миграция (meta есть, версии нет) не считается повреждением."""
+    db_path = tmp_path / "app.db"
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        connection.commit()
+    finally:
+        connection.close()
+
+    database = storage.open_storage(db_path)
+    try:
+        assert database.recovered_backup is None
+        assert database.list_categories() == []
+        assert read_rows(
+            db_path, "SELECT value FROM meta WHERE key = 'schema_version'"
+        ) == [(str(storage.SCHEMA_VERSION),)]
+    finally:
+        database.close()
+
+
+def test_unrecoverable_database_reports_storage_error(tmp_path, monkeypatch):
+    """Пустую БД на месте испорченной создать не удалось — StorageError, а не падение."""
+
+    def fail(path):
+        raise sqlite3.DatabaseError("не открывается")
+
+    db_path = tmp_path / "app.db"
+    db_path.write_bytes(b"broken")
+    monkeypatch.setattr(storage, "_open_connection", fail)
+
+    with pytest.raises(storage.StorageError) as error:
+        storage.open_storage(db_path)
+
+    assert str(error.value) == f"Не удалось создать БД {db_path}: не открывается"
+
+
 def test_default_db_path_uses_flet_data_directory(tmp_path, monkeypatch):
     monkeypatch.setenv("FLET_APP_STORAGE_DATA", str(tmp_path))
 

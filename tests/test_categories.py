@@ -12,18 +12,17 @@ from support import (
     FakeStorage,
     category_end_event,
     category_start_event,
-    default_actions,
+    commit_title,
     drop_category,
     fake_focus,
     make_app,
     measure,
     pick_up_category,
+    scroll_spy,
+    slot_actions,
+    start_rename,
 )
 from ui import theme
-from ui.actions import (
-    ButtonAction,
-    create_button_area,
-)
 from ui.app import ChecklistApp
 from ui.controls import create_category_input
 from ui.views import CategoryView
@@ -46,6 +45,17 @@ def test_category_view_starts_with_title_text():
     assert view.gesture_area.content is view.panel
     # Горизонтальный отступ названия — у слота, а не у панели.
     assert view.title_slot.padding == theme.CATEGORY_TITLE_PADDING
+
+
+def test_category_view_without_handlers_ignores_gestures():
+    """Вид можно собрать отдельно от приложения: без обработчиков жесты молчат."""
+    view = CategoryView(category=domain.Category(id=1, title="Дом", position=0))
+
+    asyncio.run(view.gesture_area.on_long_press(None))
+    asyncio.run(view.gesture_area.on_long_press_start(category_start_event(view)))
+
+    assert view.selected is False
+    assert view.collapsed is False
 
 
 def test_buttons_hide_while_editing_title():
@@ -101,8 +111,6 @@ def test_category_drag_is_led_by_the_app_not_the_list():
 
     assert isinstance(app.category_list, ft.ListView)
     assert app.category_list.on_scroll == app._on_scroll
-    # Штатного переупорядочивания у списка больше нет.
-    assert not hasattr(app.category_list, "on_reorder")
     assert callable(views[0].gesture_area.on_long_press_start)
 
 
@@ -356,29 +364,28 @@ def test_selection_swaps_button_actions():
     page, app, haptic, (home,) = make_app("Дом")
 
     # Ничего не выделено: виден только плюс, он создаёт категорию.
-    assert app.plus_button.visible is True
-    assert app.plus_button.on_click == app.create_category
-    assert app.plus_button.content.semantics_label == theme.LABEL_CREATE_CATEGORY
-    assert app.pencil_button.visible is False
-    assert app.trash_button.visible is False
+    assert slot_actions(app) == [
+        (theme.LABEL_CREATE_CATEGORY, app.create_category, True),
+        (theme.LABEL_RENAME_CATEGORY, app.rename_category, False),
+        (theme.LABEL_DELETE_CATEGORY, app.delete_category, False),
+    ]
 
     app._select_category(home)
 
     # Выделена категория: плюс добавляет пункт, карандаш и корзина — категорию.
-    assert app.plus_button.visible is True
-    assert app.plus_button.content.semantics_label == theme.LABEL_ADD_ITEM
-    assert app.plus_button.on_click == app.add_item
-    assert app.pencil_button.visible is True
-    assert app.pencil_button.on_click == app.rename_category
-    assert app.trash_button.visible is True
-    assert app.trash_button.on_click == app.delete_category
+    assert slot_actions(app) == [
+        (theme.LABEL_ADD_ITEM, app.add_item, True),
+        (theme.LABEL_RENAME_CATEGORY, app.rename_category, True),
+        (theme.LABEL_DELETE_CATEGORY, app.delete_category, True),
+    ]
 
     app._deselect()
 
-    assert app.plus_button.on_click == app.create_category
-    assert app.plus_button.content.semantics_label == theme.LABEL_CREATE_CATEGORY
-    assert app.pencil_button.visible is False
-    assert app.trash_button.visible is False
+    assert slot_actions(app) == [
+        (theme.LABEL_CREATE_CATEGORY, app.create_category, True),
+        (theme.LABEL_RENAME_CATEGORY, app.rename_category, False),
+        (theme.LABEL_DELETE_CATEGORY, app.delete_category, False),
+    ]
 
 
 def test_switching_selection_keeps_the_same_buttons():
@@ -488,44 +495,6 @@ def test_category_input_for_rename_is_prefilled_and_taps_outside_separately():
     assert category_input.on_tap_outside is on_tap_outside
 
 
-def test_pencil_button_runs_given_handler():
-    events = []
-    actions = default_actions()
-    actions[1] = ButtonAction(
-        theme.LABEL_RENAME_CATEGORY, lambda event: events.append(event)
-    )
-    pencil_button = create_button_area(actions).content.controls[1]
-
-    pencil_button.on_click(None)
-
-    assert len(events) == 1
-
-
-def test_pencil_button_renames_category_without_item_selection():
-    page, app, haptic, views = make_app("Дом")
-
-    assert app.pencil_button.on_click == app.rename_category
-
-
-def test_trash_button_deletes_category_without_item_selection():
-    page, app, haptic, views = make_app("Дом")
-
-    assert app.trash_button.on_click == app.delete_category
-
-
-def test_trash_button_runs_given_handler():
-    events = []
-    actions = default_actions()
-    actions[2] = ButtonAction(
-        theme.LABEL_DELETE_CATEGORY, lambda event: events.append(event)
-    )
-    trash_button = create_button_area(actions).content.controls[2]
-
-    trash_button.on_click(None)
-
-    assert len(events) == 1
-
-
 def test_list_tap_area_forwards_the_tap_cancel():
     page, app, haptic, views = make_app("Дом")
 
@@ -564,7 +533,7 @@ def test_rename_without_selection_does_nothing(monkeypatch):
 def test_rename_is_ignored_while_a_title_is_already_edited(monkeypatch):
     page, app, haptic, (home, work) = make_app("Дом", "Работа")
     app._select_category(work)
-    field = app._begin_title_input(work, work.title)
+    field = start_rename(app, work)
     focused = fake_focus(monkeypatch)
 
     asyncio.run(app.rename_category(None))
@@ -577,10 +546,8 @@ def test_rename_is_ignored_while_a_title_is_already_edited(monkeypatch):
 def test_rename_saves_title_and_keeps_selection():
     page, app, haptic, (home, work) = make_app("Дом", "Работа")
     app._select_category(home)
-    field = app._begin_title_input(home, home.title)
 
-    field.value = "Квартира"
-    asyncio.run(app._finish_title_input(home))
+    commit_title(app, home, "Квартира")
 
     assert home.title == "Квартира"
     assert home.title_text.value == "Квартира"
@@ -590,19 +557,41 @@ def test_rename_saves_title_and_keeps_selection():
     assert app._selected_view is home
     assert home.selected is True
     assert app.button_area.visible is True
-    assert app.plus_button.content.semantics_label == theme.LABEL_ADD_ITEM
-    assert app.pencil_button.visible is True
-    assert app.trash_button.visible is True
+    assert slot_actions(app) == [
+        (theme.LABEL_ADD_ITEM, app.add_item, True),
+        (theme.LABEL_RENAME_CATEGORY, app.rename_category, True),
+        (theme.LABEL_DELETE_CATEGORY, app.delete_category, True),
+    ]
     assert page.views[0].can_pop is False
+
+
+def test_keyboard_action_commits_the_title():
+    """Кнопка действия клавиатуры и потеря фокуса сохраняют название один раз."""
+    page, app, haptic, (home,) = make_app("Дом")
+    app._select_category(home)
+    field = start_rename(app, home)
+    field.value = "Квартира"
+
+    asyncio.run(field.on_submit(None))
+
+    assert home.title == "Квартира"
+    assert app.storage.saved == [(home.category.id, "Квартира")]
+    assert home.title_slot.content is home.title_text
+
+    # on_blur приходит после on_submit — второй записи нет.
+    asyncio.run(field.on_blur(None))
+    assert app.storage.saved == [(home.category.id, "Квартира")]
+
+    # Тап вне поля после закрытия ввода — уже не «тот же тап»: флага нет.
+    asyncio.run(field.on_tap_outside(None))
+    assert app._tap_ended_input is False
 
 
 def test_rename_with_unchanged_title_does_not_write_to_storage():
     page, app, haptic, (home,) = make_app("Дом")
     app._select_category(home)
-    field = app._begin_title_input(home, home.title)
 
-    field.value = " Дом "
-    asyncio.run(app._finish_title_input(home))
+    commit_title(app, home, " Дом ")
 
     assert app.storage.saved == []
     assert home.title == "Дом"
@@ -611,10 +600,8 @@ def test_rename_with_unchanged_title_does_not_write_to_storage():
 def test_rename_with_empty_title_uses_default_name():
     page, app, haptic, (home,) = make_app("Дом")
     app._select_category(home)
-    field = app._begin_title_input(home, home.title)
 
-    field.value = "   "
-    asyncio.run(app._finish_title_input(home))
+    commit_title(app, home, "   ")
 
     assert home.title == "Категория"
     assert app.storage.saved == [(home.category.id, "Категория")]
@@ -624,10 +611,8 @@ def test_rename_write_error_keeps_previous_title_and_reports():
     page, app, haptic, (home,) = make_app("Дом")
     app._select_category(home)
     app.storage.fail_save = True
-    field = app._begin_title_input(home, home.title)
 
-    field.value = "Квартира"
-    asyncio.run(app._finish_title_input(home))
+    commit_title(app, home, "Квартира")
 
     # Коммит до UI: при ошибке панель показывает прежнее название.
     assert home.title == "Дом"
@@ -640,7 +625,7 @@ def test_rename_write_error_keeps_previous_title_and_reports():
 def test_back_while_renaming_saves_title_and_keeps_selection():
     page, app, haptic, (home,) = make_app("Дом")
     app._select_category(home)
-    field = app._begin_title_input(home, home.title)
+    field = start_rename(app, home)
     field.value = "Квартира"
 
     asyncio.run(app._on_confirm_pop(None))
@@ -684,7 +669,7 @@ def test_can_pop_is_off_while_title_is_edited():
 def test_tap_outside_ends_input_and_keeps_selection():
     page, app, haptic, (home,) = make_app("Дом")
     app._select_category(home)
-    field = app._begin_title_input(home, home.title)
+    field = start_rename(app, home)
     field.value = "Квартира"
 
     # Нажатие вне поля: ввод завершается, введённое название сохраняется.
@@ -703,7 +688,7 @@ def test_tap_outside_ends_input_and_keeps_selection():
 def test_tap_after_editing_ends_deselects_category():
     page, app, haptic, (home,) = make_app("Дом")
     app._select_category(home)
-    field = app._begin_title_input(home, home.title)
+    field = start_rename(app, home)
 
     asyncio.run(field.on_tap_outside(None))
     app.category_area.content.on_tap(None)  # тап, закрывший клавиатуру
@@ -718,7 +703,7 @@ def test_tap_cancel_clears_the_keyboard_closing_tap_flag():
     """Тап вне поля стал прокруткой: флаг не должен съесть следующий тап."""
     page, app, haptic, (home,) = make_app("Дом")
     app._select_category(home)
-    field = app._begin_title_input(home, home.title)
+    field = start_rename(app, home)
 
     asyncio.run(field.on_tap_outside(None))
     app.category_area.content.on_tap_cancel(None)
@@ -731,7 +716,7 @@ def test_tap_cancel_clears_the_keyboard_closing_tap_flag():
 def test_list_tap_while_editing_saves_title_without_deselecting():
     page, app, haptic, (home,) = make_app("Дом")
     app._select_category(home)
-    field = app._begin_title_input(home, home.title)
+    field = start_rename(app, home)
     field.value = "Квартира"
 
     app.category_area.content.on_tap(None)
@@ -760,10 +745,11 @@ def test_delete_removes_selected_category_from_list_and_storage():
     assert [view.category.position for view in app.views] == [0, 1]
     # Выделение снято: удалённой категории больше нет, слоты — исходные.
     assert app._selected_view is None
-    assert app.plus_button.on_click == app.create_category
-    assert app.plus_button.content.semantics_label == theme.LABEL_CREATE_CATEGORY
-    assert app.pencil_button.visible is False
-    assert app.trash_button.visible is False
+    assert slot_actions(app) == [
+        (theme.LABEL_CREATE_CATEGORY, app.create_category, True),
+        (theme.LABEL_RENAME_CATEGORY, app.rename_category, False),
+        (theme.LABEL_DELETE_CATEGORY, app.delete_category, False),
+    ]
     assert app.button_area.visible is True
     assert page.views[0].can_pop is True
     assert page.updates == 1
@@ -811,7 +797,7 @@ def test_delete_while_editing_title_drops_input_state():
     """Ввод и та же категория: поле уходит вместе с панелью, кнопки — назад."""
     page, app, haptic, (home, work) = make_app("Дом", "Работа")
     app._select_category(home)
-    app._begin_title_input(home, home.title)
+    start_rename(app, home)
 
     asyncio.run(app.delete_category(None))
 
@@ -827,7 +813,7 @@ def test_delete_category_after_edit_does_not_write_deleted_title():
     """Завершение ввода после удаления не пишет название удалённой категории."""
     page, app, haptic, (home, work) = make_app("Дом", "Работа")
     app._select_category(home)
-    field = app._begin_title_input(home, home.title)
+    field = start_rename(app, home)
 
     asyncio.run(app.delete_category(None))
     field.value = "Квартира"
@@ -835,3 +821,61 @@ def test_delete_category_after_edit_does_not_write_deleted_title():
 
     assert app.storage.saved == []
     assert app.views == [work]
+
+
+# Создание категории — кнопка «плюс», когда ничего не выделено.
+
+
+def test_create_category_appends_panel_and_opens_input(monkeypatch):
+    page, app, haptic, (home,) = make_app("Дом")
+    # Новую категорию надо доскроллить: список остаётся на прежнем месте.
+    category_list = scroll_spy(app)
+    focused = fake_focus(monkeypatch)
+
+    asyncio.run(app.create_category(None))
+
+    # Категория создана в БД и добавлена в конец списка на экране.
+    assert [item.title for item in app.storage.categories] == ["Дом", "Категория"]
+    assert [view.title for view in app.views] == ["Дом", "Категория"]
+    created = app.views[-1]
+    assert category_list.controls == [home.item, created.item]
+    assert category_list.calls == [{"offset": -1}]
+    # На месте названия — пустое поле с подсказкой «Категория».
+    assert app._editing_view is created
+    assert created.input is created.title_slot.content
+    assert created.input.value == ""
+    assert created.input.hint_text == domain.DEFAULT_CATEGORY_TITLE
+    assert focused == [created.input]
+    # Пока идёт ввод, кнопки скрыты, «назад» не закрывает приложение.
+    assert app.button_area.visible is False
+    assert page.views[0].can_pop is False
+
+
+def test_create_category_saves_entered_title(monkeypatch):
+    page, app, haptic, views = make_app("Дом")
+    scroll_spy(app)
+    fake_focus(monkeypatch)
+    asyncio.run(app.create_category(None))
+    created = app.views[-1]
+
+    commit_title(app, created, "  Отдых  ")
+
+    assert created.title == "Отдых"
+    assert created.title_text.value == "Отдых"
+    assert created.title_slot.content is created.title_text
+    assert app.storage.saved == [(created.category.id, "Отдых")]
+    assert app.button_area.visible is True
+    assert page.views[0].can_pop is True
+
+
+def test_create_category_write_error_adds_nothing_and_reports():
+    page, app, haptic, (home,) = make_app("Дом")
+    app.storage.fail_create_category = True
+
+    asyncio.run(app.create_category(None))
+
+    # Коммит до UI: при ошибке новой панели нет, поле не открывается.
+    assert app.views == [home]
+    assert app._editing_view is None
+    assert app.button_area.visible is True
+    assert page.messages == ["Не удалось создать категорию"]

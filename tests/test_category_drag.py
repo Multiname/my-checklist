@@ -211,6 +211,57 @@ def test_category_drag_cancel_removes_the_proxy_without_saving():
     assert app.button_area.visible is True
 
 
+def test_panel_size_change_feeds_the_drag_model():
+    """Клиент сообщил размер панели — по нему строятся прокси и зазор."""
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+
+    home.panel.on_size_change(
+        ft.LayoutSizeChangeEvent(
+            name="size_change", control=home.panel, width=311.0, height=170.0
+        )
+    )
+
+    assert (home.width, home.height) == (311.0, 170.0)
+
+
+def test_unmeasured_category_uses_the_template_slot_height():
+    """Категория за пределами экрана размеров не шлёт: её слот считается по шаблону.
+
+    Без оценки зазор на месте такой категории занял бы ноль: соседние панели
+    прыгнули бы при подъёме.
+    """
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    measure(app)
+    measured = work.height
+    home.height = None
+
+    heights = app._category_slot_heights()
+
+    assert heights[0] == category_panel_height(30.0, []) + theme.CATEGORY_SPACING
+    assert heights[1] == measured + theme.CATEGORY_SPACING
+
+
+def test_drag_start_restores_sizes_after_the_panel_was_collapsed():
+    """Свёрнутая панель не запоминает собственную нулевую высоту.
+
+    Клиент присылает `size_change` и на свёрнутую панель: её высота 0 — это не
+    размер панели, и запоминать его нельзя, иначе прокси и зазор следующего
+    перетаскивания схлопнутся.
+    """
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    measure(app)
+    collapsed_height = home.height
+    pick_up_category(app, home)
+
+    home.panel.on_size_change(
+        ft.LayoutSizeChangeEvent(
+            name="size_change", control=home.panel, width=300.0, height=0.0
+        )
+    )
+
+    assert home.height == collapsed_height
+
+
 def test_item_drag_and_category_drag_do_not_start_together():
     """Пока категория «в руке», её пункты не поднимаются, и наоборот."""
     page, app, haptic, home, work, first, second = make_app_with_items()

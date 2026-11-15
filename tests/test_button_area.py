@@ -52,15 +52,17 @@ def test_buttons_are_clickable_with_ink_ripple():
         assert callable(button.on_click)
 
 
-def test_plus_button_runs_given_handler():
+@pytest.mark.parametrize("slot", [0, 1, 2])
+def test_slot_runs_given_handler(slot):
+    """Каждый слот зовёт своё действие — слоты не перепутаны местами."""
     events = []
     actions = default_actions()
-    actions[0] = ButtonAction(
-        theme.LABEL_CREATE_CATEGORY, lambda event: events.append(event)
+    actions[slot] = ButtonAction(
+        actions[slot].label, lambda event: events.append(event)
     )
-    plus_button = create_button_area(actions).content.controls[0]
+    button = create_button_area(actions).content.controls[slot]
 
-    plus_button.on_click(None)
+    button.on_click(None)
 
     assert len(events) == 1
 

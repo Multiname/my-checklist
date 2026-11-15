@@ -61,10 +61,15 @@ def test_long_press_move_event_is_built_from_client_data():
 
 
 def test_base_row_top_follows_the_template():
+    """Верх строки считается и для категорий ниже первой: их верх — сумма панелей."""
     metrics = [(30, [50, 60]), (24, [])]
 
     assert base_row_top(metrics, 0, 0) == 66.0
     assert base_row_top(metrics, 0, 1) == 120.0
+    # Вторая категория: панель первой целиком идёт в счёт (66 + 110 + 4 + 12).
+    assert base_row_top(metrics, 1, 0) == 244.0
+    # Категория без пунктов перед нужной занимает только название.
+    assert base_row_top([(30, []), (24, [40])], 1, 0) == 122.0
 
 
 def test_drag_layout_repeats_the_template_with_a_gap():
