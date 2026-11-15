@@ -310,6 +310,47 @@ def create_item_checkbox(item: domain.Item) -> ft.Checkbox:
     )
 
 
+def create_checkbox_blocker() -> ft.GestureDetector:
+    """Прозрачный слой над чекбоксом: делает его некликабельным без смены вида.
+
+    Пока что-то выделено (или идёт ввод названия), тап по чекбоксу не должен
+    ничего менять. Просто проигнорировать событие на сервере нельзя: клиент
+    успевает нарисовать переключение до ответа Python, и чекбокс на мгновение
+    «мигает». Поэтому над чекбоксом лежит прозрачный слой-перехватчик: он
+    ловит тап (распознаватель лежит выше в `Stack` и выигрывает арену), а
+    чекбокс его не получает вовсе. Сам слой ничего не рисует (прозрачный
+    контейнер, без `ink`), поэтому внешний вид чекбокса не меняется — в отличие
+    от `disabled`, который красит его в бледный цвет.
+
+    Слой скрыт, пока ничего не выделено: тогда тап снова доходит до чекбокса.
+    Скрытый контрол остаётся в дереве, поэтому его `visible` меняется без
+    пересоздания виджетов; размер стека задаёт сам чекбокс, и слой не влияет
+    на высоту строки.
+    """
+    return ft.GestureDetector(
+        # Слой занимает весь `Stack` — ровно площадь чекбокса.
+        left=0,
+        top=0,
+        right=0,
+        bottom=0,
+        # Прозрачный контейнер нужен только чтобы у GestureDetector был
+        # потомок, по которому считается попадание.
+        content=ft.Container(bgcolor=ft.Colors.TRANSPARENT),
+        on_tap=_no_op,
+        # Слой не должен появляться в TalkBack: действие остаётся у чекбокса.
+        exclude_from_semantics=True,
+        visible=False,
+    )
+
+
+def create_item_checkbox_area(
+    checkbox: ft.Checkbox,
+) -> tuple[ft.Stack, ft.GestureDetector]:
+    """Чекбокс вместе с запирающим слоем; возвращает стек и сам слой."""
+    blocker = create_checkbox_blocker()
+    return ft.Stack(controls=[checkbox, blocker]), blocker
+
+
 def create_items_box() -> ft.Container:
     """Контейнер пунктов внутри панели категории.
 
@@ -1276,12 +1317,19 @@ class ItemView(TitledView):
         # на вторую строку внутри этой ширины.
         self.title_slot.expand = True
         self.checkbox = create_item_checkbox(item)
+        # Чекбокс с прозрачным запирающим слоем: пока что-то выделено или идёт
+        # ввод названия, слой виден и ловит тап, поэтому чекбокс не переключается
+        # даже на мгновение (см. `create_checkbox_blocker`). Показывать слой
+        # приложению помогает `_apply_selection()`.
+        self.checkbox_area, self.checkbox_blocker = create_item_checkbox_area(
+            self.checkbox
+        )
         # Отметку переключает сам чекбокс: тап по нему не доходит до жестов
         # строки (вложенный распознаватель выигрывает арену), поэтому выделение
         # от него не меняется. Что делать с отметкой (её можно менять только
         # без выделения) решает приложение.
         self.checkbox.on_change = view_event_handler(self.gestures.toggle, self)
-        self.panel = create_item_panel(self.checkbox, self.title_slot)
+        self.panel = create_item_panel(self.checkbox_area, self.title_slot)
         self.row = create_item_row(self.panel)
         # Ячейка в контейнере пунктов: строка вместе с промежутком до следующей
         # (см. `create_item_cell`). Она же сворачивается вместе со строкой.
@@ -1357,6 +1405,14 @@ class ItemView(TitledView):
 
     def save_title(self, storage: Storage, title: str) -> str:
         return storage.set_item_title(self.item.id, title)
+
+    def set_checkbox_blocked(self, blocked: bool) -> None:
+        """Запирает чекбокс прозрачным слоем, не меняя его вид.
+
+        Клик по чекбоксу в запертом состоянии не доходит до него вовсе, поэтому
+        он не переключается даже на мгновение (см. `create_checkbox_blocker`).
+        """
+        self.checkbox_blocker.visible = blocked
 
     def set_checked(self, checked: bool) -> None:
         """Применяет отметку к строке: чекбокс и серый цвет отмеченного пункта.
@@ -1705,10 +1761,12 @@ class ChecklistApp:
         """Отметка пункта: тап по чекбоксу переключает состояние и пишет его в БД.
 
         По спеке отметка переключается, только когда не выделена ни категория, ни
-        пункт (docs/features/feature-item.md): пока что-то выделено, тап по
-        чекбоксу — это тап по строке, и отметка меняться не должна. Клиент уже
-        показал новую отметку, поэтому в этом случае значение возвращается из
-        модели и уходит обратно клиенту.
+        пункт (docs/features/feature-item.md). Обычный тап в это время до
+        чекбокса не доходит — его ловит прозрачный запирающий слой
+        (`create_checkbox_blocker`), поэтому клиент даже не рисует переключение.
+        Проверка здесь остаётся страховкой: событие может прийти от TalkBack
+        (он активирует чекбокс без тапа) или когда выделение появилось между
+        событием и обработкой. Тогда значение из модели уходит обратно клиенту.
 
         Запись — до обновления экрана: при ошибке чекбокс и цвет названия
         остаются прежними, показывается сообщение. Новое значение приходит из
@@ -2816,6 +2874,18 @@ class ChecklistApp:
             ButtonAction(LABEL_DELETE_CATEGORY, self.delete_category, visible=False),
         )
 
+    def _set_checkboxes_blocked(self, blocked: bool) -> None:
+        """Запирает или отпускает чекбоксы всех пунктов.
+
+        Отметку можно менять только когда ничего не выделено и не идёт ввод
+        названия ([feature-item.md](features/feature-item.md)), поэтому в
+        остальное время чекбоксы не должны реагировать на тап. Слой над
+        чекбоксом прозрачный: внешний вид не меняется, в отличие от `disabled`.
+        """
+        for category in self.views:
+            for item_view in category.items:
+                item_view.set_checkbox_blocked(blocked)
+
     def _apply_selection(self) -> None:
         """Показывает действия, подходящие текущему выделению и вводу."""
         selected = self._selected_view is not None or self._selected_item is not None
@@ -2826,6 +2896,9 @@ class ChecklistApp:
             strict=True,
         ):
             bind_button(button, action)
+        # Пока что-то выделено или идёт ввод, чекбоксы не реагируют на тап: иначе
+        # клиент на мгновение нарисовал бы переключение, а сервер его откатил.
+        self._set_checkboxes_blocked(selected or editing)
         # Пока идёт ввод названия или перетаскивание (категории или пункта),
         # контейнер скрыт целиком (см. feature-button-area.md): кнопки не
         # должны заслонять список в момент, когда по нему ведут пальцем.

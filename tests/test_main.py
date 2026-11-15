@@ -1399,7 +1399,11 @@ def test_category_view_keeps_items_inside_its_items_box():
     first = view.items[0]
     assert first.checkbox.value is False
     assert first.row.content is first.panel
-    assert first.panel.content.controls[0] is first.checkbox
+    # Чекбокс закрыт прозрачным слоем-перехватчиком: до него тап не доходит,
+    # пока что-то выделено (см. «Отметка пункта»).
+    assert first.panel.content.controls[0] is first.checkbox_area
+    assert first.checkbox_area.controls == [first.checkbox, first.checkbox_blocker]
+    assert first.checkbox_blocker.visible is False
     assert first.title_slot.content is first.title_text
     # Пункт знает свою категорию: по ней решается, выделяет ли тап пункт.
     assert first.category_view is view
@@ -3795,3 +3799,75 @@ def test_drag_proxy_shows_the_checked_look():
     assert checkbox.value is True
     assert checkbox.active_color == main.ITEM_CHECKED_COLOR
     assert title.style == main.ITEM_CHECKED_TITLE_STYLE
+
+
+def test_checkbox_blocker_is_a_transparent_hidden_layer():
+    """Слой-перехватчик не рисуется и не попадает в TalkBack."""
+    blocker = main.create_checkbox_blocker()
+
+    assert blocker.visible is False
+    assert (blocker.left, blocker.top, blocker.right, blocker.bottom) == (0, 0, 0, 0)
+    assert blocker.content.bgcolor == ft.Colors.TRANSPARENT
+    assert blocker.on_tap is not None
+    assert blocker.exclude_from_semantics is True
+
+
+def test_checkbox_is_blocked_while_a_category_is_selected():
+    """Пока категория выделена, чекбоксы не реагируют на тап вовсе.
+
+    Слой прозрачный, поэтому вид чекбокса не меняется (в отличие от
+    `disabled`): он лишь не даёт клиенту нарисовать переключение.
+    """
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    assert first.checkbox_blocker.visible is False
+
+    app._select_category(home)
+
+    assert first.checkbox_blocker.visible is True
+    assert second.checkbox_blocker.visible is True
+
+    app._deselect()
+
+    assert first.checkbox_blocker.visible is False
+    assert second.checkbox_blocker.visible is False
+
+
+def test_checkbox_is_blocked_while_an_item_is_selected():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+
+    select_item(app, second)
+
+    assert first.checkbox_blocker.visible is True
+    assert second.checkbox_blocker.visible is True
+
+    app._deselect()
+
+    assert first.checkbox_blocker.visible is False
+    assert second.checkbox_blocker.visible is False
+
+
+def test_checkbox_is_blocked_while_a_title_is_edited():
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    report = work.append_item(item(1, work.category.id, "Отчёт"))
+    app.storage.items = [report.item]
+
+    app._begin_title_input(home)
+    assert report.checkbox_blocker.visible is True
+
+    asyncio.run(app._finish_title_input(home))
+    assert report.checkbox_blocker.visible is False
+
+
+def test_checkbox_blocker_does_not_hide_the_checkbox_itself():
+    """Слой лежит поверх чекбокса и не заменяет его: вид и размер те же."""
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    stack = first.checkbox_area
+
+    assert stack.controls[0] is first.checkbox
+    assert stack.controls[1] is first.checkbox_blocker
+    assert stack.clip_behavior == ft.ClipBehavior.HARD_EDGE
+    # Размер стека задаёт чекбокс: слой позиционирован по его краям.
+    assert first.checkbox_blocker.left == 0
+    assert first.checkbox_blocker.top == 0
+    assert first.checkbox_blocker.right == 0
+    assert first.checkbox_blocker.bottom == 0
