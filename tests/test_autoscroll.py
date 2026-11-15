@@ -401,28 +401,26 @@ def test_category_drag_switches_the_scroll_interval():
     assert app.category_list.scroll_interval == theme.SCROLL_INTERVAL_IDLE
 
 
-def test_item_drag_keeps_all_list_rows_built():
-    """Пока пункт перетаскивается, список держит в дереве все строки.
+def test_list_keeps_every_row_built_while_an_item_is_dragged():
+    """Список держит в дереве все строки — и во время перетаскивания тоже.
 
     Прокрутка уводит строку за край видимой области, и ленивый список
     уничтожил бы её виджет вместе с распознавателем жеста: движение и отпускание
-    пальца перестали бы приходить (проверено на устройстве).
+    пальца перестали бы приходить (проверено на устройстве). Поэтому кеш списка
+    растянут на всё содержимое всегда (см. `SCROLL_CACHE_EXTENT`), а не только
+    на время перетаскивания.
     """
     page, app, haptic, home, work, first, second = make_app_with_items()
     measure(app)
-    assert app.category_list.cache_extent is None
+    assert app.category_list.cache_extent == theme.SCROLL_CACHE_EXTENT
 
     pick_up_item(first)
 
-    drag = app._item_drag
-    assert app.category_list.cache_extent == 2 * (
-        app._content_height(drag) + app._list_viewport(drag)
-    )
-    assert app.category_list.cache_extent > app._content_height(drag)
+    assert app.category_list.cache_extent == theme.SCROLL_CACHE_EXTENT
 
     drop_item(app, first, 0)
 
-    assert app.category_list.cache_extent is None
+    assert app.category_list.cache_extent == theme.SCROLL_CACHE_EXTENT
 
 
 def test_autoscroll_distance_is_estimated_before_the_first_scroll():

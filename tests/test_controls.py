@@ -66,6 +66,9 @@ def test_category_list_scrolls_full_screen_above_button_area():
     # В покое позиция прокрутки нужна редко: события не отнимают кадры.
     assert category_list.scroll_interval == theme.SCROLL_INTERVAL_IDLE
     assert theme.SCROLL_INTERVAL_IDLE > theme.SCROLL_INTERVAL_DRAG
+    # Кеш растянут на всё содержимое: строки строятся один раз, а не на каждом
+    # проезде через край экрана (иначе инерционная прокрутка подтормаживает).
+    assert category_list.cache_extent == theme.SCROLL_CACHE_EXTENT
 
 
 def test_category_input_shows_keyboard_and_commits_on_focus_loss():

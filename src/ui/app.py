@@ -811,25 +811,6 @@ class ChecklistApp:
             return self._update_category_target(drag)
         return self._update_drag_target(drag)
 
-    def _drag_cache_extent(self, drag: ItemDrag | CategoryDrag) -> float:
-        """Кеш списка на время перетаскивания пункта или категории.
-
-        Прокрутка уводит перетаскиваемое за край видимой области. Ленивый
-        список держит в дереве только то, что попадает в его кеш (по
-        умолчанию ~250 px за краем), остальное уничтожает — вместе с
-        `GestureDetector` перетаскиваемого. Уничтоженный распознаватель молча
-        перестаёт присылать `long_press_move_update` и `long_press_end`: прокси
-        замирает там, где его застал проход, отпускание пальца не обрабатывается,
-        а список остаётся с включённой автопрокруткой. Поэтому на время
-        перетаскивания кеш растягивается на всё содержимое: элементы остаются в
-        дереве, и жест живёт до отпускания.
-
-        Высоты дальних элементов — оценка, поэтому запас двойной. Больше
-        содержимого кеш не стоит ничего: строить больше, чем есть в списке,
-        нельзя.
-        """
-        return 2 * (self._content_height(drag) + self._list_viewport(drag))
-
     def _item_metrics(self) -> list[tuple[float, list[float]]]:
         """Высоты строк: измеренные, а для невидимых строк — оценка.
 
@@ -965,9 +946,6 @@ class ChecklistApp:
         self.stack.controls.append(drag.proxy)
         self._place_category_gap(drag)
         self._move_category_proxy(drag, global_position.y)
-        # Прокрутка уводит поднятую категорию за пределы видимой области, и
-        # ленивый список уничтожил бы её виджет вместе с распознавателем жеста.
-        self.category_list.cache_extent = self._drag_cache_extent(drag)
         self._apply_selection()
         self.page.update()
 
@@ -1050,8 +1028,6 @@ class ChecklistApp:
                     break
         self._clear_category_gap()
         drag.view.restore()
-        # Кеш возвращается к обычному: список снова строит только видимое.
-        self.category_list.cache_extent = None
         # В покое позиция прокрутки нужна редко: события не должны отнимать
         # кадры у инерционной прокрутки.
         self._set_scroll_interval(SCROLL_INTERVAL_IDLE)
@@ -1230,11 +1206,6 @@ class ChecklistApp:
         drag.proxy.left = LIST_PADDING
         self.stack.controls.append(drag.proxy)
         self._move_proxy(drag, global_position.y)
-        # Пока пункт перетаскивается, список держит в дереве все категории:
-        # прокрутка уводит исходную строку за пределы видимой области, и ленивый
-        # список уничтожил бы её виджет вместе с распознавателем жеста (см.
-        # _drag_cache_extent).
-        self.category_list.cache_extent = self._drag_cache_extent(drag)
         # Кнопки прячутся сразу, не дожидаясь события выделения: порядок двух
         # событий долгого нажатия задаёт клиент, а drag уже начался.
         self._apply_selection()
@@ -1343,8 +1314,6 @@ class ChecklistApp:
                     break
         self._drop_gap()
         drag.view.restore()
-        # Кеш возвращается к обычному: список снова строит только видимое.
-        self.category_list.cache_extent = None
         # В покое позиция прокрутки нужна редко: события не должны отнимать
         # кадры у инерционной прокрутки.
         self._set_scroll_interval(SCROLL_INTERVAL_IDLE)

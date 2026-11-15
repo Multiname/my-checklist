@@ -35,6 +35,7 @@ from ui.theme import (
     ITEMS_BOX_PADDING,
     LIST_BOTTOM_PADDING,
     LIST_PADDING,
+    SCROLL_CACHE_EXTENT,
     SCROLL_INTERVAL_IDLE,
 )
 
@@ -341,6 +342,10 @@ def create_category_list() -> ft.ListView:
         # (auto_scroll прокручивает к концу при каждой смене содержимого).
         build_controls_on_demand=False,
         auto_scroll=False,
+        # Кеш растянут на всё содержимое: иначе клиент строит панель заново
+        # каждый раз, когда она въезжает на экран, и инерционная прокрутка
+        # подтормаживает на каждой новой строке (см. `SCROLL_CACHE_EXTENT`).
+        cache_extent=SCROLL_CACHE_EXTENT,
         # В покое позиция прокрутки нужна только к началу перетаскивания,
         # поэтому события прокрутки приходят редко и не нагружают канал.
         # Во время drag частоту поднимает `ChecklistApp._set_scroll_interval`.

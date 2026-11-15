@@ -132,8 +132,6 @@ def test_drag_start_collapses_the_panel_and_shows_the_proxy():
     assert drag.panel_top == 300.0
     assert drag.proxy.top == 300.0 - drag.origin_y
     assert app._dragging is True
-    # Пока категория «в руке», список держит в дереве всё содержимое.
-    assert app.category_list.cache_extent is not None
 
 
 def test_category_proxy_follows_the_finger_vertically():
@@ -254,7 +252,6 @@ def test_category_drag_restores_everything_after_drop():
     assert home.item.padding == theme.CATEGORY_ITEM_PADDING
     assert all(view.item.margin is None for view in app.views)
     assert app.stack.controls == [app.category_area, app.button_area]
-    assert app.category_list.cache_extent is None
     # Выделение переживает перетаскивание.
     assert app._selected_view is home
 
