@@ -76,11 +76,21 @@ $env:USERPROFILE = "$PWD\.flet\home"
   в `C:\Users\<user>\.android` и не может скачать даже списки пакетов.
 - **`PYTHONIOENCODING=utf-8`.** Иначе flet падает с `UnicodeEncodeError:
   'charmap' codec` на первом же выводе pip (консоль здесь cp1251).
-- **Шаблон Flutter-проекта чистится от desktop-платформ.** В шаблоне
-  `flet-build-template` есть `windows/` и `linux/`; Flutter создаёт для них
-  симлинки на плагины, а окружение агента их создавать не может
+- **Шаблон Flutter-проекта чистится от desktop-платформ и RECORD_AUDIO.**
+  В шаблоне `flet-build-template` есть `windows/` и `linux/`; Flutter создаёт
+  для них симлинки на плагины, а окружение агента их создавать не может
   (`WinError 1314`; «Режим разработчика» Windows не помогает — процесс работает
-  с пониженными правами).
+  с пониженными правами). В debug/profile-манифестах шаблона также объявлен
+  `RECORD_AUDIO`; приложению микрофон не нужен, поэтому строка удаляется.
+- **Артефакты toolchain проверяются по SHA256.** Flutter-архив и
+  `flet-build-template.zip` сверяются с эталонами в `tools\run_on_device.ps1`
+  (`$FlutterSha256`, `$FletTemplateSha256`). При обновлении flet нужно добавить
+  туда новую версию; неизвестная версия — ошибка, а не скачивание без проверки.
+- **Разрешения Android выключены в `pyproject.toml`.** В
+  `[tool.flet.android.permission]` стоят `INTERNET = false` и
+  `RECORD_AUDIO = false`; flet добавляет в main-манифест
+  `tools:node="remove"`. В debug-сборке `INTERNET` остаётся из debug-манифеста
+  Flutter для hot reload, в release его нет.
 - **Архивы Python для Android берутся из локального кэша.** Плагин
   `serious_python_android` на каждой сборке делает ETag-запрос к GitHub и при
   ответе `502 Bad Gateway` валит сборку, хотя архивы уже лежат в
@@ -91,8 +101,9 @@ $env:USERPROFILE = "$PWD\.flet\home"
 Индекс колёс Flet `https://pypi.flet.dev` нужен при упаковке Python-кода
 (`flet debug` вызывает pip): для Android единственная нативная зависимость Flet —
 `msgpack`, её Android-колесо есть только там. Без VPN/прокси pip падает с
-`No matching distribution found for msgpack>=1.1.0`. GitHub нужен только за
-архивами `python-build`, и то лишь пока их нет в локальном кэше.
+`No matching distribution found for msgpack>=1.1.0`. GitHub нужен за шаблоном
+flet и архивами `python-build`, Google Storage — за Flutter; всё это только пока
+соответствующих файлов нет в локальном кэше.
 
 ## Ограничения песочницы DSH (Windows)
 В ограниченном режиме (workspace-write) каталоги, созданные с правами `0700`
@@ -104,7 +115,7 @@ $env:USERPROFILE = "$PWD\.flet\home"
 
 Отдельное ограничение действует даже при полном доступе: программы, запускаемые
 из папки проекта (`.venv\Scripts\python.exe`, `.python\3.12\python.exe`), не
-могут писать в профиль пользователя `C:\Users\MineF`. Поэтому `flet run`
+могут писать в профиль пользователя `C:\Users\<user>`. Поэтому `flet run`
 запускается с подменённым `USERPROFILE` (см. выше), а запуск на телефоне
 подменяет все каталоги инструментов.
 

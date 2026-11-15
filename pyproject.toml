@@ -27,5 +27,12 @@ addopts = "-p no:cacheprovider"
 org = "com.blackline"
 product = "My checklist"
 
+# Приложение работает только с локальной БД: сеть и микрофон не нужны.
+# `false` заставляет flet добавить в манифест tools:node="remove" — это
+# убирает разрешение, даже если его добавит плагин.
+[tool.flet.android.permission]
+"android.permission.INTERNET" = false
+"android.permission.RECORD_AUDIO" = false
+
 [tool.flet.app]
 path = "src"

@@ -93,6 +93,52 @@ $SdkDir = Join-Path $FletHome 'Android\sdk'
 $AdbExe = Join-Path $SdkDir 'platform-tools\adb.exe'
 $TmpDir = Join-Path $Root '.flet\tmp'
 
+# Эталонные SHA256 скачиваемых артефактов toolchain. Версия Flutter берётся из
+# flet, поэтому при обновлении flet нужно добавить сюда новую версию:
+#   Flutter  — поле sha256 в releases_windows.json (storage.googleapis.com);
+#   шаблон   — digest ассета flet-build-template.zip в GitHub Release.
+# Неизвестная версия — ошибка, а не скачивание без проверки.
+$FlutterSha256 = @{
+    '3.47.9' = 'd8e2b5977e09082c6440f89dc1aa887b94c8fbcc3b39222797046295a3f68a9e'
+}
+$FletTemplateSha256 = @{
+    '1.1.2' = 'ccd6ecabc2afbe14343be3bc51bb4b012672add25e0378be18758f9ddd4ca643'
+}
+
+function Test-FileSha256 {
+    <#
+    .SYNOPSIS
+        Проверяет SHA256 файла без удаления при несовпадении.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Expected
+    )
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+    $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    return $actual.Equals($Expected, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Assert-FileSha256 {
+    <#
+    .SYNOPSIS
+        Проверяет SHA256 и удаляет файл при несовпадении.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Expected,
+        [Parameter(Mandatory)][string]$Label
+    )
+    $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    if (-not $actual.Equals($Expected, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        throw "$Label`: SHA256 не совпал. Ожидался $Expected, получен $actual. Файл удалён."
+    }
+    return $actual
+}
+
 function Initialize-Environment {
     <#
     .SYNOPSIS
@@ -186,16 +232,33 @@ function Install-FlutterSdk {
         throw 'Нужны curl.exe и tar.exe (есть в Windows 10 1803+): без них toolchain не поставить.'
     }
 
+    $expected = $FlutterSha256[$Version]
+    if (-not $expected) {
+        throw "Нет эталонного SHA256 для Flutter $Version. Добавьте версию в `$FlutterSha256` в tools\run_on_device.ps1 (значение — из releases_windows.json)."
+    }
+
     $url = "https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_$Version-stable.zip"
     $archive = Join-Path $FletHome "flutter_windows_$Version-stable.zip"
     $staging = Join-Path $TmpDir 'flutter_extract'
 
+    if ((Test-Path $archive) -and -not (Test-FileSha256 -Path $archive -Expected $expected)) {
+        Write-Warning "Архив Flutter не совпал с эталонным SHA256 — скачиваю заново."
+        Remove-Item -LiteralPath $archive -Force
+    }
+
     if (-not (Test-Path $archive)) {
+        # Скачиваем во временный файл: недокачанный архив не должен выглядеть
+        # готовым при следующем запуске.
+        $download = "$archive.part"
+        Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue
         Write-Host "Скачиваю Flutter $Version (~2 ГБ): $url" -ForegroundColor Cyan
-        & $curl.Source -L --fail --show-error --output $archive $url
+        & $curl.Source -L --fail --show-error --output $download $url
         if ($LASTEXITCODE -ne 0) {
+            Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue
             throw "Не удалось скачать Flutter ($LASTEXITCODE): $url"
         }
+        Assert-FileSha256 -Path $download -Expected $expected -Label 'Flutter' | Out-Null
+        Move-Item -LiteralPath $download -Destination $archive -Force
     }
 
     Write-Host 'Распаковываю Flutter...' -ForegroundColor Cyan
@@ -244,7 +307,7 @@ function Ensure-AndroidSdk {
 function Repair-BuildTemplate {
     <#
     .SYNOPSIS
-        Оставляет в шаблоне Flutter-проекта только Android.
+        Готовит шаблон Flutter-проекта: только Android, без RECORD_AUDIO.
 
     .DESCRIPTION
         Шаблон `flet-build-template` содержит каталоги `windows/` и `linux/`.
@@ -252,52 +315,164 @@ function Repair-BuildTemplate {
         агента (пониженные права Windows) не может создавать симлинки:
         `Building with plugins requires symlink support` / `WinError 1314`.
         Проект Android-only, desktop-платформы не нужны, поэтому каталоги
-        вырезаются из кэша шаблона один раз — до того, как flet развернёт из
-        него Flutter-проект.
+        вырезаются из кэша шаблона до того, как flet развернёт из него
+        Flutter-проект.
+
+        В debug/profile-манифестах шаблона также лежит RECORD_AUDIO — он нужен
+        шаблону, но не приложению, поэтому строка удаляется.
+
+        Скачанный архив сверяется с эталонным SHA256. Оригинал хранится рядом
+        (`flet-build-template.orig.zip`), а flet читает уже исправленную копию.
+        Маркер `android-only-v2.marker` содержит SHA256 исправленного архива и
+        позволяет не пересобирать кэш на каждом запуске.
 
         Каталог кэша совпадает с тем, что использует flet:
         `~/.flet/cache/build-template/v<версия>/` (здесь `~` — `.flet\home`).
     #>
     param([Parameter(Mandatory)][string]$FletVersion)
 
-    $cacheDir = Join-Path $FletHome ".flet\cache\build-template\v$FletVersion"
-    $templateZip = Join-Path $cacheDir 'flet-build-template.zip'
-    $marker = Join-Path $cacheDir 'android-only.marker'
-    if (Test-Path $marker) {
-        return
+    $expected = $FletTemplateSha256[$FletVersion]
+    if (-not $expected) {
+        throw "Нет эталонного SHA256 для шаблона flet $FletVersion. Добавьте версию в `$FletTemplateSha256` в tools\run_on_device.ps1 (значение — digest ассета flet-build-template.zip)."
     }
 
-    if (-not (Test-Path $templateZip)) {
-        $url = "https://github.com/flet-dev/flet/releases/download/v$FletVersion/flet-build-template.zip"
-        Write-Host "Скачиваю шаблон Flutter-проекта: $url" -ForegroundColor Cyan
-        New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
-        & curl.exe -L --fail --show-error --output $templateZip $url
-        if ($LASTEXITCODE -ne 0) {
-            throw "Не удалось скачать шаблон ($LASTEXITCODE): $url"
+    $cacheDir = Join-Path $FletHome ".flet\cache\build-template\v$FletVersion"
+    $templateZip = Join-Path $cacheDir 'flet-build-template.zip'
+    $originalZip = Join-Path $cacheDir 'flet-build-template.orig.zip'
+    $backupZip = Join-Path $cacheDir 'flet-build-template.zip.bak'
+    $marker = Join-Path $cacheDir 'android-only-v2.marker'
+
+    if (Test-Path $marker) {
+        $repairedHash = (Get-Content -Raw -Path $marker).Trim()
+        if ((Test-Path $templateZip) -and (Test-FileSha256 -Path $templateZip -Expected $repairedHash)) {
+            return
+        }
+        Write-Warning 'Кэш шаблона изменён или отсутствует — восстанавливаю из проверенного оригинала.'
+        Remove-Item -LiteralPath $marker -Force
+    }
+
+    # Ищем уже проверенный оригинал: .orig после прошлого запуска, старый .bak
+    # или нетронутый zip. Повреждённые/исправленные копии не подходят.
+    $original = $null
+    foreach ($candidate in @($originalZip, $backupZip, $templateZip)) {
+        if (Test-FileSha256 -Path $candidate -Expected $expected) {
+            $original = $candidate
+            break
         }
     }
 
+    if (-not $original) {
+        $url = "https://github.com/flet-dev/flet/releases/download/v$FletVersion/flet-build-template.zip"
+        $download = "$originalZip.part"
+        New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+        Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue
+        Write-Host "Скачиваю шаблон Flutter-проекта: $url" -ForegroundColor Cyan
+        & curl.exe -L --fail --show-error --output $download $url
+        if ($LASTEXITCODE -ne 0) {
+            Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue
+            throw "Не удалось скачать шаблон ($LASTEXITCODE): $url"
+        }
+        Assert-FileSha256 -Path $download -Expected $expected -Label 'Шаблон flet' | Out-Null
+        Move-Item -LiteralPath $download -Destination $originalZip -Force
+        $original = $originalZip
+    }
+
+    if ($original -ne $originalZip) {
+        Copy-Item -LiteralPath $original -Destination $originalZip -Force
+    }
+    Copy-Item -LiteralPath $originalZip -Destination $templateZip -Force
+
     $code = @'
-import os, sys, zipfile
+import os, re, sys, zipfile
 
 src = sys.argv[1]
 tmp = src + '.tmp'
 dropped = 0
+audio = 0
 with zipfile.ZipFile(src) as zin, zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as zout:
     for item in zin.infolist():
         name = item.filename
         if '/windows/' in name or '/linux/' in name:
             dropped += 1
             continue
-        zout.writestr(item, zin.read(name))
+        data = zin.read(name)
+        if name.endswith('/AndroidManifest.xml'):
+            text = data.decode('utf-8')
+            # Шаблон добавляет RECORD_AUDIO только в debug/profile; в main его нет.
+            new_text, removed = re.subn(
+                r'(?m)^[ \t]*<uses-permission android:name="android\.permission\.RECORD_AUDIO" />[ \t]*\r?\n?',
+                '',
+                text,
+            )
+            if removed:
+                audio += removed
+                data = new_text.encode('utf-8')
+            if 'RECORD_AUDIO' in new_text:
+                raise SystemExit(f'RECORD_AUDIO остался в {name}')
+        zout.writestr(item, data)
 os.replace(tmp, src)
-print(f'убрано desktop-файлов: {dropped}')
+print(f'убрано desktop-файлов: {dropped}, RECORD_AUDIO: {audio}')
 '@
-    & $VenvPython -c $code $templateZip
+    # Код передаётся файлом, а не через `-c`: в нём есть двойные кавычки, и
+    # командная строка Windows PowerShell искажает их при передаче аргумента.
+    $patchScript = Join-Path $TmpDir 'patch_flet_template.py'
+    [System.IO.File]::WriteAllText($patchScript, $code, (New-Object System.Text.UTF8Encoding($false)))
+    & $VenvPython $patchScript $templateZip
     if ($LASTEXITCODE -ne 0) {
-        throw 'Не удалось подготовить шаблон Flutter-проекта'
+        throw "Не удалось подготовить шаблон Flutter-проекта (код $LASTEXITCODE)"
     }
-    New-Item -ItemType File -Force -Path $marker | Out-Null
+    Remove-Item -LiteralPath $patchScript -Force -ErrorAction SilentlyContinue
+
+    $repairedHash = (Get-FileHash -LiteralPath $templateZip -Algorithm SHA256).Hash
+    Set-Content -LiteralPath $marker -Value $repairedHash -Encoding Ascii
+}
+
+function Repair-GeneratedAndroidPermissions {
+    <#
+    .SYNOPSIS
+        Убирает лишние разрешения из уже сгенерированного Flutter-проекта.
+
+    .DESCRIPTION
+        `flet` может переиспользовать `build/flutter`, не пересоздавая его из
+        шаблона. На этот случай чистим готовый проект: RECORD_AUDIO из
+        debug/profile-манифестов (его добавляет шаблон) и INTERNET из main.
+        В release debug/profile-манифесты не участвуют, поэтому INTERNET туда
+        не вернётся; в debug его снова добавит debug-манифест для hot reload.
+    #>
+    $srcDir = Join-Path $Root 'build\flutter\android\app\src'
+    if (-not (Test-Path $srcDir)) {
+        return
+    }
+
+    $changed = 0
+    $permissionPattern = '(?m)^[ \t]*<uses-permission android:name="android\.permission\.{0}" />[ \t]*\r?\n?'
+
+    foreach ($variant in @('debug', 'profile')) {
+        $file = Join-Path $srcDir "$variant\AndroidManifest.xml"
+        if (-not (Test-Path $file)) {
+            continue
+        }
+        $text = Get-Content -Raw -Path $file
+        $new = [regex]::Replace($text, ($permissionPattern -f 'RECORD_AUDIO'), '')
+        if ($new -ne $text) {
+            [System.IO.File]::WriteAllText($file, $new, (New-Object System.Text.UTF8Encoding($false)))
+            $changed += 1
+        }
+    }
+
+    $mainFile = Join-Path $srcDir 'main\AndroidManifest.xml'
+    if (Test-Path $mainFile) {
+        $text = Get-Content -Raw -Path $mainFile
+        $new = [regex]::Replace($text, ($permissionPattern -f 'INTERNET'), '')
+        if ($new -ne $text) {
+            [System.IO.File]::WriteAllText($mainFile, $new, (New-Object System.Text.UTF8Encoding($false)))
+            $changed += 1
+        }
+    }
+
+    if ($changed -gt 0) {
+        Write-Host "Убраны лишние разрешения из build\flutter (файлов: $changed)." -ForegroundColor Cyan
+    }
 }
 
 function Repair-PythonDistCache {
@@ -514,6 +689,7 @@ $flutterDir = Install-FlutterSdk -Version $flutterVersion
 Ensure-AndroidSdk
 $fletVersion = (& $VenvPython -c 'import flet.version; print(flet.version.flet_version)' | Out-String).Trim()
 Repair-BuildTemplate -FletVersion $fletVersion
+Repair-GeneratedAndroidPermissions
 Repair-PythonDistCache
 & $AdbExe start-server | Out-Null
 

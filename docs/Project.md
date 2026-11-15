@@ -715,6 +715,12 @@ cmd /c "tools\run_on_device.cmd -DeviceId 3B161E00W5600000"    # сборка, �
 cmd /c "tools\run_on_device.cmd -DeviceId 3B161E00W5600000 -Attach"  # логи и hot reload
 ```
 
+Скрипт сверяет SHA256 Flutter-архива и шаблона flet, а перед сборкой чистит
+`RECORD_AUDIO` из debug/profile-манифестов. `INTERNET` и `RECORD_AUDIO`
+выключены в `[tool.flet.android.permission]` ([pyproject.toml](../pyproject.toml)),
+поэтому в release-манифесте их нет; в debug `INTERNET` нужен Flutter для hot
+reload и остаётся только в debug-сборке.
+
 Как это работает, параметры и типовые ошибки — скилл
 [run-on-device](../.agents/skills/run-on-device/SKILL.md). Проверки на устройстве и
 особенности Android, важные для кода, — [Verification.md](Verification.md).

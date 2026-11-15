@@ -44,9 +44,11 @@ cmd /c "tools\run_on_device.cmd -SetupOnly"
 2. При первом запуске разворачивает toolchain в `.flet\home`: Flutter SDK, JDK 17,
    Android SDK с platform-tools. Это несколько ГиБ и десятки минут, повторные запуски
    toolchain не трогают.
-3. Приводит кэш шаблона Flutter-проекта к android-only: вырезает из него каталоги
-   `windows/` и `linux/` и ставит маркер `android-only.marker` (иначе Flutter пытается
-   создать для них симлинки и падает с `WinError 1314`).
+3. Проверяет SHA256 скачанных Flutter-архива и шаблона flet и приводит кэш
+   шаблона к android-only: вырезает каталоги `windows/` и `linux/`, а также
+   `RECORD_AUDIO` из debug/profile-манифестов, и ставит маркер
+   `android-only-v2.marker` (иначе Flutter пытается создать симлинки для
+   desktop-платформ и падает с `WinError 1314`, а приложение просит микрофон).
 4. Патчит плагин `serious_python_android` в кэше pub: если архивы Python для Android
    уже скачаны в `.flet\home\.flet\cache\python-build`, сборка не ходит за ними на GitHub
    (иначе ETag-запрос к GitHub может упасть с `502 Bad Gateway` и сломать сборку).
@@ -56,6 +58,10 @@ cmd /c "tools\run_on_device.cmd -SetupOnly"
    сборка Gradle, установка APK, запуск на телефоне. После запуска `flutter run` выходит.
 7. Проверяет по `adb shell pidof`, что процесс приложения жив (до `-VerifySeconds`,
    по умолчанию 60 с), и печатает итог.
+
+`INTERNET` и `RECORD_AUDIO` выключены в `[tool.flet.android.permission]`
+(`pyproject.toml`): в release-манифесте их нет. Debug-сборка оставляет
+`INTERNET` из debug-манифеста Flutter — он нужен для hot reload.
 
 ## Признак успеха
 
@@ -141,6 +147,8 @@ cmd /c "tools\run_on_device.cmd -DeviceId <id> -Attach"
 | `Телефон виден, но отладка по USB не авторизована` | Разблокировать телефон и нажать «Разрешить» в запросе |
 | `Building with plugins requires symlink support` / `WinError 1314` | В шаблоне Flutter-проекта вернулись каталоги `windows`/`linux` (например, после обновления flet). Удалить `.flet\home\.flet\cache\build-template` и повторить запуск — скрипт снова сделает шаблон android-only. «Режим разработчика» Windows здесь не помогает: процесс работает с пониженными правами |
 | `502 Bad Gateway` на `github.com/flet-dev/python-build/...` | GitHub временно отвечает ошибкой. Если архивы уже в `.flet\home\.flet\cache\python-build`, скрипт берёт их оттуда; иначе нужен доступ к GitHub — повторить позже |
+| `SHA256 не совпал` | Скачанный Flutter-архив или шаблон flet повреждён/подменён; скрипт удаляет файл и предлагает повторить. Проверить сеть/прокси и запустить снова |
+| `Нет эталонного SHA256 для ...` | Обновился flet/Flutter. Добавить новую версию и её SHA256 в `$FlutterSha256`/`$FletTemplateSha256` в `tools\run_on_device.ps1` |
 | `No matching distribution found for msgpack...` | Недоступен индекс колёс Flet `https://pypi.flet.dev` (нужен VPN/прокси); без него APK не собрать |
 | `CreateFile failed 5` / `Access denied` при запуске | Скрипт запущен без полного доступа (danger-full-access) |
 | `Lost connection to device` | Телефон заблокировался или экран погас (в режиме `-Attach`); приложение при этом закрывается — запустить снова |

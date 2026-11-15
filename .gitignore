@@ -18,8 +18,28 @@ env/
 # (см. docs/Environment.md, «Ограничения песочницы»).
 pytest-of-*/
 
-# Секреты
+# Секреты и ключи подписи
 .env
+.env.*
+!.env.example
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key
+local.properties
+google-services.json
+
+# Локальные данные и артефакты сборки
+*.db
+*.db-*
+*.db.*
+*.sqlite
+*.sqlite3
+*.apk
+*.aab
+*.log
 
 # Flet
 .flet/
