@@ -243,6 +243,40 @@ def test_delete_category_removes_its_items(tmp_path):
     database.close()
 
 
+def test_delete_category_removes_items_created_through_storage(tmp_path):
+    """Каскад удаляет и пункты, созданные обычными операциями хранилища.
+
+    После повторного открытия БД в ней нет ни удалённой категории, ни её
+    пунктов, а пункты других категорий остаются на своих местах
+    (docs/features/feature-storage.md, сценарий 5).
+    """
+    db_path = tmp_path / "app.db"
+    database = storage.open_storage(db_path)
+    home, work = make_categories(database, "Дом", "Работа")
+    database.create_item(home.id, "Помыть посуду")
+    database.create_item(home.id, "Пропылесосить")
+    database.create_item(work.id, "Отчёт")
+
+    database.delete_category(home.id)
+    database.close()
+
+    database = storage.open_storage(db_path)
+    try:
+        assert [
+            (category.title, category.position)
+            for category in database.list_categories()
+        ] == [("Работа", 0)]
+        assert [
+            (item.title, item.category_id, item.position)
+            for item in database.list_items()
+        ] == [("Отчёт", work.id, 0)]
+    finally:
+        database.close()
+
+    # В самой БД тоже не осталось пунктов удалённой категории.
+    assert read_rows(db_path, "SELECT category_id FROM items") == [(work.id,)]
+
+
 def test_delete_unknown_category_is_rejected(tmp_path):
     database = open_db(tmp_path)
     try:
