@@ -465,3 +465,163 @@ def test_item_positions_are_per_category(tmp_path):
         assert (home_first.position, work_first.position) == (0, 0)
     finally:
         database.close()
+
+
+def item_titles(items: list[domain.Item]) -> list[str]:
+    return [item.title for item in items]
+
+
+def test_move_item_down_keeps_order_and_positions(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+        first = database.create_item(home.id, "Первый")
+        second = database.create_item(home.id, "Второй")
+        third = database.create_item(home.id, "Третий")
+
+        orders = database.move_item(first.id, home.id, 2)
+
+        # Позиция — как у move_category: в списке после удаления перемещаемого.
+        assert list(orders) == [home.id]
+        assert item_titles(orders[home.id]) == ["Второй", "Третий", "Первый"]
+        assert [item.position for item in orders[home.id]] == [0, 1, 2]
+        assert database.list_items() == orders[home.id]
+        # Пункт не потерялся: id и категория прежние.
+        assert orders[home.id][-1].id == first.id
+        assert orders[home.id][0].id == second.id
+        assert orders[home.id][1].id == third.id
+    finally:
+        database.close()
+
+
+def test_move_item_up_keeps_order_and_positions(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+        first = database.create_item(home.id, "Первый")
+        second = database.create_item(home.id, "Второй")
+        third = database.create_item(home.id, "Третий")
+
+        ordered = database.move_item(third.id, home.id, 0)[home.id]
+
+        assert item_titles(ordered) == ["Третий", "Первый", "Второй"]
+        assert [item.id for item in ordered] == [third.id, first.id, second.id]
+    finally:
+        database.close()
+
+
+def test_move_item_clamps_position_to_the_category_bounds(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+        first = database.create_item(home.id, "Первый")
+        second = database.create_item(home.id, "Второй")
+
+        assert item_titles(database.move_item(first.id, home.id, 99)[home.id]) == [
+            "Второй",
+            "Первый",
+        ]
+        assert item_titles(database.move_item(first.id, home.id, -5)[home.id]) == [
+            "Первый",
+            "Второй",
+        ]
+    finally:
+        database.close()
+
+
+def test_move_item_to_another_category_orders_both_categories(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+        work = database.create_category("Работа")
+        dishes = database.create_item(home.id, "Посуда")
+        vacuum = database.create_item(home.id, "Пылесос")
+        report = database.create_item(work.id, "Отчёт")
+
+        orders = database.move_item(vacuum.id, work.id, 0)
+
+        assert set(orders) == {home.id, work.id}
+        assert item_titles(orders[home.id]) == ["Посуда"]
+        assert [item.position for item in orders[home.id]] == [0]
+        assert item_titles(orders[work.id]) == ["Пылесос", "Отчёт"]
+        assert [item.position for item in orders[work.id]] == [0, 1]
+        # Пункт теперь принадлежит новой категории, а не прежней.
+        assert [item.category_id for item in orders[work.id]] == [work.id, work.id]
+        assert orders[work.id][0].id == vacuum.id
+        assert orders[work.id][1].id == report.id
+        assert orders[home.id][0].id == dishes.id
+        assert item_titles(database.list_items()) == ["Посуда", "Пылесос", "Отчёт"]
+    finally:
+        database.close()
+
+
+def test_move_item_to_empty_category_starts_at_zero(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+        work = database.create_category("Работа")
+        only = database.create_item(home.id, "Посуда")
+
+        orders = database.move_item(only.id, work.id, 0)
+
+        assert orders[home.id] == []
+        assert [(item.title, item.position) for item in orders[work.id]] == [
+            ("Посуда", 0)
+        ]
+        assert item_titles(database.list_items()) == ["Посуда"]
+    finally:
+        database.close()
+
+
+def test_moved_item_order_survives_reopen(tmp_path):
+    db_path = tmp_path / "app.db"
+    database = storage.open_storage(db_path)
+    home = database.create_category("Дом")
+    work = database.create_category("Работа")
+    first = database.create_item(home.id, "Первый")
+    second = database.create_item(home.id, "Второй")
+    database.create_item(work.id, "Отчёт")
+    database.move_item(second.id, work.id, 1)
+    database.close()
+
+    database = storage.open_storage(db_path)
+    try:
+        assert [
+            (item.title, item.category_id, item.position)
+            for item in database.list_items()
+        ] == [
+            ("Первый", home.id, 0),
+            ("Отчёт", work.id, 0),
+            ("Второй", work.id, 1),
+        ]
+        assert database.list_items()[2].id == second.id
+        assert database.list_items()[0].id == first.id
+    finally:
+        database.close()
+
+
+def test_move_unknown_item_is_rejected(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+        created = database.create_item(home.id, "Посуда")
+
+        with pytest.raises(storage.StorageError):
+            database.move_item(999, home.id, 0)
+        assert database.list_items() == [created]
+    finally:
+        database.close()
+
+
+def test_move_item_to_unknown_category_is_rejected(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+        created = database.create_item(home.id, "Посуда")
+
+        with pytest.raises(storage.StorageError):
+            database.move_item(created.id, 999, 0)
+        # БД не изменилась: пункт остался в своей категории.
+        assert database.list_items() == [created]
+    finally:
+        database.close()

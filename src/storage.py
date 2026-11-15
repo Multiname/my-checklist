@@ -264,6 +264,72 @@ class Storage:
             )
         return title
 
+    def move_item(
+        self, item_id: int, category_id: int, new_position: int
+    ) -> dict[int, list[Item]]:
+        """Перемещает пункт и возвращает порядок затронутых категорий.
+
+        ``category_id`` — категория, в которую встаёт пункт (может быть прежней),
+        ``new_position`` — позиция среди пунктов этой категории после удаления
+        перемещаемого пункта (так же, как у ``move_category``); значение вне
+        диапазона подрезается. При переносе в другую категорию позиции
+        материализуются заново в двух контейнерах — прежней и новой категории
+        (см. docs/features/feature-storage.md), поэтому дыр в порядке не
+        остаётся. Неизвестный пункт или категория — ``StorageError``, БД при
+        этом не меняется (транзакция откатывается).
+        """
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT category_id FROM items WHERE id = ?", (item_id,)
+            ).fetchone()
+            if row is None:
+                raise StorageError(f"Пункт {item_id} не найден")
+            previous_category_id = int(row["category_id"])
+            if category_id != previous_category_id:
+                known = self._conn.execute(
+                    "SELECT 1 FROM categories WHERE id = ?", (category_id,)
+                ).fetchone()
+                if known is None:
+                    raise StorageError(f"Категория {category_id} не найдена")
+            target_ids = [
+                moved["id"]
+                for moved in self._conn.execute(
+                    "SELECT id FROM items WHERE category_id = ? AND id <> ? "
+                    "ORDER BY position ASC, id ASC",
+                    (category_id, item_id),
+                ).fetchall()
+            ]
+            position = max(0, min(new_position, len(target_ids)))
+            target_ids.insert(position, item_id)
+            self._conn.execute(
+                "UPDATE items SET category_id = ? WHERE id = ?",
+                (category_id, item_id),
+            )
+            for index, moved_id in enumerate(target_ids):
+                self._conn.execute(
+                    "UPDATE items SET position = ? WHERE id = ?",
+                    (index, moved_id),
+                )
+            _materialize_item_positions(self._conn, previous_category_id)
+            _materialize_item_positions(self._conn, category_id)
+            affected = [previous_category_id]
+            if category_id != previous_category_id:
+                affected.append(category_id)
+            return {cid: self._read_items(cid) for cid in affected}
+
+    def _read_items(self, category_id: int) -> list[Item]:
+        """Пункты одной категории в порядке отображения.
+
+        Вызывается внутри транзакции ``move_item``: порядок читается из БД
+        после материализации и остаётся источником истины для UI.
+        """
+        rows = self._conn.execute(
+            "SELECT id, category_id, title, is_checked, position FROM items "
+            "WHERE category_id = ? ORDER BY position ASC, id ASC",
+            (category_id,),
+        ).fetchall()
+        return [_item_from_row(row) for row in rows]
+
 
 def open_storage(db_path: Path | str | None = None) -> Storage:
     """Открывает (при первом запуске — создаёт) БД приложения.
