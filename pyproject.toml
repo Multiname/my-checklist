@@ -19,12 +19,12 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["src"]
 # Кэш pytest отключён: в ограниченном режиме песочницы DSH его временные
-# каталоги (0700) становятся недоступны процессу. См. docs/Project.md.
+# каталоги (0700) становятся недоступны процессу. См. docs/Environment.md.
 addopts = "-p no:cacheprovider"
 
 [tool.flet]
-org = "com.example"
-product = "My Checklist"
+org = "com.blackline"
+product = "My checklist"
 
 [tool.flet.app]
 path = "src"

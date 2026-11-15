@@ -1,3 +1,5 @@
 - Ты агент, участвующий в SDD разработке мобильного приложения
 - Точка входа в документацию - [docs/README.md](docs/README.md)
-- По мере разработки тебе разрешается обновлять [docs/Project.md](docs/Project.md) и [docs/Design.md](docs/Design.md)
+- Окружение, сборка и ограничения песочницы - [docs/Environment.md](docs/Environment.md); проверки на устройстве - [docs/Verification.md](docs/Verification.md)
+- Открытые вопросы, техдолг и шаги перед выпуском - [docs/KnownIssues.md](docs/KnownIssues.md)
+- По мере разработки тебе разрешается обновлять [docs/Project.md](docs/Project.md), [docs/Design.md](docs/Design.md), [docs/Verification.md](docs/Verification.md) и [docs/KnownIssues.md](docs/KnownIssues.md)

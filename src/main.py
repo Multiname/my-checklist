@@ -1,4 +1,4 @@
-"""Точка входа приложения «Чеклист»."""
+"""Точка входа приложения My checklist."""
 
 from __future__ import annotations
 
@@ -3035,7 +3035,7 @@ class ChecklistApp:
 
 
 async def main(page: ft.Page):
-    page.title = "Чеклист"
+    page.title = "My checklist"
     # Светлая тема зафиксирована: иконки кнопок чёрные (см. docs/Design.md).
     page.theme_mode = ft.ThemeMode.LIGHT
 

@@ -63,13 +63,14 @@ cmd /c "tools\run_on_device.cmd -SetupOnly"
 `Installing ... app-debug.apk...`, `Syncing files to device <модель>`, а последние строки:
 
 ```
-Готово: com.example.my_checklist собран, установлен и запущен на <id> (pid <N>).
-Приложение можно закрыть: adb shell am force-stop com.example.my_checklist
+Готово: com.blackline.my_checklist собран, установлен и запущен на <id> (pid <N>).
+Приложение можно закрыть: adb shell am force-stop com.blackline.my_checklist
 ```
 
-Код возврата — 0. На телефоне открыто приложение «Чеклист».
+Код возврата — 0. На телефоне открыто приложение «My checklist».
 
-Пакет приложения — `com.example.my_checklist`. Первый запуск с нуля идёт около
+Пакет приложения — `com.blackline.my_checklist` (организация `org` и название
+`product` в `[tool.flet]`). Первый запуск с нуля идёт около
 40 минут (toolchain + `assembleDebug` с NDK и CMake); при готовом toolchain —
 30–40 секунд (инкрементальная сборка ~16 с, установка ~8 с).
 
@@ -78,15 +79,15 @@ cmd /c "tools\run_on_device.cmd -SetupOnly"
 Если код не менялся, сборку можно не запускать: APK уже стоит на телефоне.
 
 ```powershell
-& .flet\home\Android\sdk\platform-tools\adb.exe shell am start -W -n com.example.my_checklist/.MainActivity
-& .flet\home\Android\sdk\platform-tools\adb.exe shell pidof com.example.my_checklist
+& .flet\home\Android\sdk\platform-tools\adb.exe shell am start -W -n com.blackline.my_checklist/.MainActivity
+& .flet\home\Android\sdk\platform-tools\adb.exe shell pidof com.blackline.my_checklist
 ```
 
 Запуск занимает меньше секунды, приложение отрисовывается через 3–5 с.
 Закрыть приложение:
 
 ```powershell
-& .flet\home\Android\sdk\platform-tools\adb.exe shell am force-stop com.example.my_checklist
+& .flet\home\Android\sdk\platform-tools\adb.exe shell am force-stop com.blackline.my_checklist
 ```
 
 ## Режим с логами и hot reload

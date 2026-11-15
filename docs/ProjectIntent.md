@@ -1,4 +1,4 @@
-# Project Intent: Мобильный чеклист
+# Project Intent: My checklist
 ## Цель
 Создать мобильное приложение для ведения списка чекбоксов
 
@@ -15,3 +15,7 @@
 
 ## Non-Goals
 - Это приложение рассчитано только на Android, без iOS и т.д.
+
+## Где что искать
+Требования по функциям — [features/](features/README.md), этапы —
+[Milestones.md](Milestones.md), устройство кода — [Project.md](Project.md).
