@@ -104,6 +104,11 @@ class ChecklistApp:
         self._category_drag: CategoryDrag | None = None
         self._gap_category: CategoryView | None = None
         self._pointer_y: float | None = None
+        # Контролы, которые сдвинулись с прошлого показа экрана при
+        # перетаскивании: прокси и зазор (см. `_flush_drag`).
+        self._drag_controls: list[ft.Control] = []
+        # Элемент списка, который держит зазор категории.
+        self._category_gap_control: ft.Control | None = None
         # Прокрутка списка: нужна и автопрокрутке, и пересчёту места вставки.
         self._scroll_pixels = 0.0
         self._viewport: float | None = None
@@ -952,7 +957,11 @@ class ChecklistApp:
     def _on_category_drag_move(
         self, view: CategoryView, event: ft.LongPressMoveUpdateEvent
     ) -> None:
-        """Палец движется: прокси идёт за ним, зазор переезжает на новую цель."""
+        """Палец движется: прокси идёт за ним, зазор переезжает на новую цель.
+
+        Экран обновляется только в сдвинувшихся местах (`_flush_drag`): полный
+        патч страницы на каждое событие движения не успевал за пальцем.
+        """
         drag = self._category_drag
         if drag is None or drag.view is not view:
             return
@@ -960,7 +969,7 @@ class ChecklistApp:
         self._move_category_proxy(drag, self._pointer_y)
         self._update_category_target(drag)
         self._update_autoscroll(drag)
-        self.page.update()
+        self._flush_drag(drag)
 
     async def _on_category_drag_end(
         self, view: CategoryView, event: ft.LongPressEndEvent
@@ -1033,6 +1042,9 @@ class ChecklistApp:
         self._set_scroll_interval(SCROLL_INTERVAL_IDLE)
         self._dragging = False
         self._apply_selection()
+        # Всё сдвинувшееся покажет полный `page.update()` вызывающего: копить
+        # его в списке точечных обновлений незачем.
+        self._drag_controls.clear()
 
     def _category_slot_heights(self) -> list[float]:
         """Высоты слотов категорий: панель вместе с промежутком до следующей.
@@ -1096,20 +1108,35 @@ class ChecklistApp:
         занимает, и раскладка от такой замены не меняется (проверено на
         устройстве).
         """
-        self._clear_category_gap()
         position = drag.target if drag.target < drag.source else drag.target + 1
+        control: ft.Control | None = None
         if position < len(self.views):
-            self.views[position].item.margin = ft.Margin.only(top=drag.slot_height)
+            control = self.views[position].item
+            margin = ft.Margin.only(top=drag.slot_height)
+        else:
+            for view in reversed(self.views):
+                if view is not drag.view:
+                    control = view.item
+                    margin = ft.Margin.only(bottom=drag.slot_height)
+                    break
+        if control is self._category_gap_control:
+            # Зазор уже здесь: переставлять и перерисовывать нечего.
             return
-        for view in reversed(self.views):
-            if view is not drag.view:
-                view.item.margin = ft.Margin.only(bottom=drag.slot_height)
-                return
+        self._clear_category_gap()
+        if control is None:
+            return
+        control.margin = margin
+        self._category_gap_control = control
+        self._drag_controls.append(control)
 
     def _clear_category_gap(self) -> None:
-        """Снимает зазор со всех элементов списка."""
-        for view in self.views:
-            view.item.margin = None
+        """Снимает зазор с элемента списка, который его держал."""
+        control = self._category_gap_control
+        if control is None:
+            return
+        control.margin = None
+        self._category_gap_control = None
+        self._drag_controls.append(control)
 
     def _move_category_proxy(self, drag: CategoryDrag, pointer_y: float) -> None:
         """Двигает прокси категории за пальцем — только по вертикали."""
@@ -1220,7 +1247,8 @@ class ChecklistApp:
         перестановка начинается, когда палец проходит середину соседней
         строки, — как и при перетаскивании категории. Порог и цель считаются по
         вертикальному сдвигу: движение вбок пункт не переставляет и прокси не
-        сдвигает.
+        сдвигает. Экран обновляется только в сдвинувшихся местах
+        (`_flush_drag`): полный патч страницы не успевал за пальцем.
         """
         drag = self._item_drag
         if drag is None or drag.view is not view:
@@ -1233,7 +1261,7 @@ class ChecklistApp:
         self._move_proxy(drag, self._pointer_y)
         self._update_drag_target(drag)
         self._update_autoscroll(drag)
-        self.page.update()
+        self._flush_drag(drag)
 
     async def _on_item_drag_end(
         self, view: ItemView, event: ft.LongPressEndEvent
@@ -1318,6 +1346,8 @@ class ChecklistApp:
         # кадры у инерционной прокрутки.
         self._set_scroll_interval(SCROLL_INTERVAL_IDLE)
         self._apply_selection()
+        # Всё сдвинувшееся покажет полный `page.update()` вызывающего.
+        self._drag_controls.clear()
 
     def _place_gap(self, drag: ItemDrag, target: tuple[int, int]) -> None:
         """Ставит зазор на место вставки; прежняя категория его теряет.
@@ -1332,7 +1362,9 @@ class ChecklistApp:
         category = self.views[target[0]]
         if self._gap_category is not None and self._gap_category is not category:
             self._gap_category.remove_gap()
+            self._drag_controls.append(self._gap_category.item)
         category.place_gap(drag.gap, target[1], drag.view)
+        self._drag_controls.append(category.item)
         self._gap_category = category
 
     def _drop_gap(self) -> None:
@@ -1384,6 +1416,43 @@ class ChecklistApp:
         drag.target = (category_index, insert_index)
         self._place_gap(drag, drag.target)
         return True
+
+    # Показ сдвинувшегося при перетаскивании: только изменённые контролы.
+
+    def _flush_drag(self, drag: ItemDrag | CategoryDrag) -> None:
+        """Показывает на экране прокси и зазор после движения пальца.
+
+        `page.update()` без аргументов патчит всю страницу: сервер сравнивает
+        с прошлым показом **всё** дерево контролов. Список собран целиком
+        (`build_controls_on_demand=False`), поэтому на 40 категориях по 5
+        пунктов один такой вызов на телефоне занимает ≈45 мс — а движение
+        пальца приходит 120 раз в секунду. Прокси тогда догонял палец рывками
+        по нескольку событий сразу: `page.update()` не успевал за жестом.
+
+        Поэтому в движении патчатся только сдвинувшиеся контролы: прокси и то,
+        что переставил зазор. Их поддеревья — десятки контролов, а не всё
+        дерево страницы: ≈2 мс вместо 45. Полное обновление остаётся там, где
+        меняется структура экрана: начало и конец перетаскивания (прокси
+        появляется в `Stack` и исчезает из него).
+        """
+        controls = list(self._drag_controls)
+        self._drag_controls.clear()
+        if drag.proxy is not None:
+            controls.insert(0, drag.proxy)
+        if controls:
+            self.page.update(*controls)
+
+    def _flush_gap(self) -> None:
+        """Показывает только новый зазор: прокси при автопрокрутке не едет.
+
+        Автопрокрутка двигает содержимое под неподвижным пальцем: прокси стоит
+        на месте, а зазор переезжает на новую строку. Патч одного-двух
+        контролов вместо всей страницы — см. `_flush_drag`.
+        """
+        controls = list(self._drag_controls)
+        self._drag_controls.clear()
+        if controls:
+            self.page.update(*controls)
 
     # Прокрутка и автопрокрутка у краёв экрана.
 
@@ -1446,7 +1515,8 @@ class ChecklistApp:
             self.page.update()
             return
         if delta and self._refresh_target(drag):
-            self.page.update()
+            # Прокси при автопрокрутке стоит под пальцем: патчится только зазор.
+            self._flush_gap()
         if event.event_type == ft.ScrollType.END and drag.autoscroll > 0:
             # Продолжение — только если конец списка уехал вниз: остаток «до
             # края» для этого не годится, он положителен и тогда, когда список

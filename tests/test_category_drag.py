@@ -148,6 +148,31 @@ def test_category_proxy_follows_the_finger_vertically():
     assert drag.proxy.left == theme.LIST_PADDING
 
 
+def test_drag_move_patches_only_the_proxy_and_the_gap():
+    """Движение пальца патчит прокси и зазор, а не всю страницу.
+
+    `page.update()` без контролов — патч всей страницы: сервер сравнивает с
+    прошлым показом всё дерево контролов, а список собран целиком
+    (`build_controls_on_demand=False`). На 40 категориях по 5 пунктов такой
+    патч занимает на телефоне десятки миллисекунд, и палец (120 событий в
+    секунду) за ним не успевал.
+    """
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    measure(app)
+    pick_up_category(app, home)
+    patches: list[tuple] = []
+    page.update = lambda *controls: patches.append(controls)
+
+    drag_category_to(app, home, 500)
+
+    assert patches
+    assert all(controls for controls in patches), "патч всей страницы"
+    controls = [control for patch in patches for control in patch]
+    assert app._category_drag.proxy in controls
+    # Прокси и элементы списка, которым достался зазор.
+    assert len(controls) <= 5
+
+
 def test_category_drag_moves_the_gap_between_categories():
     page, app, haptic, (home, work, rest) = make_app("Дом", "Работа", "Отдых")
     measure(app)

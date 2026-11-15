@@ -519,6 +519,30 @@ def test_autoscroll_keeps_the_category_target_in_sync():
     assert rest.item.margin == ft.Margin.only(bottom=drag.slot_height)
 
 
+def test_scroll_during_a_drag_patches_only_the_gap():
+    """Автопрокрутка двигает зазор, а не всю страницу.
+
+    Автопрокрутка двигает содержимое под неподвижным пальцем: прокси стоит,
+    зазор переезжает. Патч всей страницы на каждое событие прокрутки (а они
+    идут десятками в секунду) занимал бы на телефоне десятки миллисекунд.
+    """
+    page, app, haptic, (home, work, rest) = make_app("Дом", "Работа", "Отдых")
+    measure(app)
+    pick_up_category(app, home)
+    patches: list[tuple] = []
+    page.update = lambda *controls: patches.append(controls)
+
+    app._on_scroll(scroll_event(pixels=300.0, max_scroll_extent=700.0))
+
+    assert patches, "зазор переехал, а экран не обновился"
+    assert all(controls for controls in patches), "патч всей страницы"
+    controls = [control for patch in patches for control in patch]
+    # Прокси при автопрокрутке стоит под пальцем: патчится только зазор.
+    assert app._category_drag.proxy not in controls
+    assert app._category_gap_control in controls
+    assert len(controls) <= 5
+
+
 def test_item_drag_finish_cancels_the_running_autoscroll():
     """Отпускание пункта останавливает проход: иначе список ехал бы без жеста."""
     page, app, haptic, home, work, first, second = make_app_with_items()

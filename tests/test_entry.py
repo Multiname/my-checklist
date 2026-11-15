@@ -15,6 +15,16 @@ def test_app_module_is_importable():
     assert callable(main.main)
 
 
+def test_entry_point_turns_auto_update_off():
+    """Экран обновляют обработчики, а не flet после каждого события.
+
+    Автообновление после каждого события патчит **всю** страницу: на длинном
+    списке это десятки миллисекунд на событие, и перетаскивание за пальцем не
+    успевало (см. docs/Project.md, «Перетаскивание и прокрутка во время drag»).
+    """
+    assert ft.context.auto_update_enabled() is False
+
+
 def test_main_adds_the_screen_and_opens_storage(monkeypatch):
     page = FakePage()
     database = FakeStorage()
