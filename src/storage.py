@@ -264,6 +264,24 @@ class Storage:
             )
         return title
 
+    def set_item_checked(self, item_id: int, is_checked: bool) -> bool:
+        """Сохраняет отметку пункта; возвращает записанное значение.
+
+        Значение передаётся явно (`is_checked`), а не инвертируется в SQL
+        (см. docs/features/feature-storage.md): так запись остаётся
+        идемпотентной, и повторное событие клиента не перевернёт отметку
+        обратно. Неизвестный ``id`` — ``StorageError``, БД при этом не
+        меняется (транзакция откатывается).
+        """
+        value = 1 if is_checked else 0
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "UPDATE items SET is_checked = ? WHERE id = ?", (value, item_id)
+            )
+            if cursor.rowcount == 0:
+                raise StorageError(f"Пункт {item_id} не найден")
+        return bool(value)
+
     def move_item(
         self, item_id: int, category_id: int, new_position: int
     ) -> dict[int, list[Item]]:

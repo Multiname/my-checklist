@@ -6,7 +6,7 @@ import asyncio
 import logging
 import math
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import flet as ft
 
@@ -102,6 +102,17 @@ ITEM_HINT_STYLE = ft.TextStyle(
     weight=ITEM_TITLE_WEIGHT,
     height=ITEM_TITLE_LINE_HEIGHT,
     color=ft.Colors.ON_SURFACE_VARIANT,
+)
+# Отмеченный пункт — «выполненный»: его название и сама отметка рисуются серым
+# (ON_SURFACE_VARIANT — тот же серый, что и подсказка в поле ввода), а не
+# цветом акцента. Размеры и положение строки не меняются: меняется только цвет
+# текста и галочки (см. docs/Design.md).
+ITEM_CHECKED_COLOR = ft.Colors.ON_SURFACE_VARIANT
+ITEM_CHECKED_TITLE_STYLE = ft.TextStyle(
+    size=ITEM_TITLE_SIZE,
+    weight=ITEM_TITLE_WEIGHT,
+    height=ITEM_TITLE_LINE_HEIGHT,
+    color=ITEM_CHECKED_COLOR,
 )
 # Фон пункта прозрачный: пункт лежит внутри панели категории, и сквозь него
 # видна панель, в том числе когда категория выделена.
@@ -267,13 +278,35 @@ def create_category_title(title: str) -> ft.Text:
     )
 
 
-def create_item_title(title: str) -> ft.Text:
-    """Название пункта: мельче названия категории, как и текст пунктов."""
+def create_item_title(title: str, *, checked: bool = False) -> ft.Text:
+    """Название пункта: мельче названия категории, у отмеченного — серое.
+
+    Цвет отмеченного пункта задан явным стилем: размер, начертание и
+    межстрочная высота те же, поэтому переключение отметки не сдвигает строку.
+    """
     return ft.Text(
         value=title,
-        style=ITEM_TITLE_STYLE,
+        style=ITEM_CHECKED_TITLE_STYLE if checked else ITEM_TITLE_STYLE,
         max_lines=2,
         overflow=ft.TextOverflow.ELLIPSIS,
+    )
+
+
+def item_title_style(checked: bool) -> ft.TextStyle:
+    """Стиль названия пункта: серый у отмеченного, обычный у остальных."""
+    return ITEM_CHECKED_TITLE_STYLE if checked else ITEM_TITLE_STYLE
+
+
+def create_item_checkbox(item: domain.Item) -> ft.Checkbox:
+    """Чекбокс пункта: отмечает состояние из БД, у отмеченного — серый.
+
+    Отметка приходит из модели (``item.is_checked``), поэтому после
+    перезапуска чекбоксы восстанавливаются из БД вместе с пунктами. Цвет
+    галочки отмеченного пункта — тот же серый, что и его название.
+    """
+    return ft.Checkbox(
+        value=item.is_checked,
+        active_color=ITEM_CHECKED_COLOR if item.is_checked else None,
     )
 
 
@@ -374,16 +407,19 @@ def item_event_handler(
     return handle
 
 
-def item_drag_handler(
+def view_event_handler(
     handler: Callable[[ItemView | CategoryView, ft.Event], object] | None,
     view: ItemView | CategoryView,
 ):
-    """Обработчик жеста перетаскивания: передаёт вид и событие жеста.
+    """Обработчик события с видом и самим событием: жесты и отметка пункта.
 
-    Из события берутся координаты пальца: по ним считается место вставки.
-    Обработчик может быть синхронным (начало и движение) и асинхронным
-    (отпускание сохраняет порядок в БД), поэтому результат ожидается только
-    если это корутина.
+    Flet передаёт событие первым аргументом, а обработчику приложения нужен ещё
+    и вид, к которому событие относится (пункт или категория), поэтому
+    обработчики замыкаются на вид. Из события берутся координаты пальца (жесты
+    перетаскивания) либо новое значение чекбокса; сам вид известен заранее.
+    Обработчик может быть синхронным (движение) и асинхронным (отпускание
+    сохраняет порядок, переключение отметки пишет в БД), поэтому результат
+    ожидается только если это корутина.
     """
 
     async def handle(event: ft.Event) -> None:
@@ -720,8 +756,8 @@ def create_item_proxy(view: ItemView) -> ft.Container:
     выделения, а размеры строки не меняются.
     """
     panel = create_item_panel(
-        ft.Checkbox(value=view.checkbox.value),
-        create_item_title(view.title),
+        create_item_checkbox(view.item),
+        create_item_title(view.title, checked=view.item.is_checked),
     )
     panel.bgcolor = ITEM_PANEL_SELECTED_COLOR
     panel.width = view.width
@@ -745,8 +781,8 @@ def create_category_proxy(view: CategoryView, width: float) -> ft.Container:
     cells = [
         ft.Container(
             content=create_item_panel(
-                ft.Checkbox(value=item.checkbox.value),
-                create_item_title(item.title),
+                create_item_checkbox(item.item),
+                create_item_title(item.title, checked=item.item.is_checked),
             ),
             padding=ITEM_CELL_PADDING,
         )
@@ -765,12 +801,13 @@ def create_category_proxy(view: CategoryView, width: float) -> ft.Container:
 
 @dataclass(frozen=True)
 class ItemGestures:
-    """Жесты пункта: выделение, перетаскивание и тап.
+    """Жесты пункта и переключение его отметки.
 
     Пункт создаётся категорией, поэтому обработчики передаются одним объектом:
-    пять отдельных параметров раздували бы конструкторы `CategoryView` и
+    шесть отдельных параметров раздували бы конструкторы `CategoryView` и
     `ItemView`. `long_press` и `tap` вызываются без события (пункт уже известен),
-    `drag_*` — с событием жеста: из него берутся координаты пальца.
+    `drag_*` и `toggle` — с событием: из него берутся координаты пальца у
+    жестов, а у отметки — новое значение чекбокса.
     """
 
     long_press: Callable[[ItemView], object] | None = None
@@ -779,6 +816,7 @@ class ItemGestures:
     drag_end: Callable[[ItemView, ft.LongPressEndEvent], object] | None = None
     drag_cancel: Callable[[ItemView], object] | None = None
     tap: Callable[[ItemView], object] | None = None
+    toggle: Callable[[ItemView, ft.ControlEvent], object] | None = None
 
 
 @dataclass(frozen=True)
@@ -1063,13 +1101,13 @@ class CategoryView(TitledView):
         self.gesture_area.on_long_press = item_event_handler(
             self.category_gestures.long_press, self
         )
-        self.gesture_area.on_long_press_start = item_drag_handler(
+        self.gesture_area.on_long_press_start = view_event_handler(
             self.category_gestures.drag_start, self
         )
-        self.gesture_area.on_long_press_move_update = item_drag_handler(
+        self.gesture_area.on_long_press_move_update = view_event_handler(
             self.category_gestures.drag_move, self
         )
-        self.gesture_area.on_long_press_end = item_drag_handler(
+        self.gesture_area.on_long_press_end = view_event_handler(
             self.category_gestures.drag_end, self
         )
         self.gesture_area.on_long_press_cancel = item_event_handler(
@@ -1207,8 +1245,9 @@ class ItemView(TitledView):
     Пункт лежит внутри панели категории, поэтому в обычном состоянии его фон
     прозрачный: сквозь него видна панель, в том числе когда категория выделена.
     Выделенный пункт закрашивается тем же цветом, что и выделенная категория.
-    Отметка показывается чекбоксом из БД; переключение отметки — задача 8
-    этапа 3.
+    Отметка показывается чекбоксом из БД, а отмеченная строка — серая
+    (`ITEM_CHECKED_COLOR`): тап по чекбоксу переключает отметку и пишет её в БД
+    (см. `ChecklistApp.toggle_item_checked`).
     """
 
     default_title = domain.DEFAULT_ITEM_TITLE
@@ -1218,8 +1257,11 @@ class ItemView(TitledView):
         item: domain.Item,
         gestures: ItemGestures | None = None,
     ) -> None:
-        super().__init__(item.title)
+        # Пункт запоминается до создания названия: от отмеченности зависит стиль
+        # текста (отмеченный пункт — серый), а `create_title_text` вызывается
+        # из конструктора базового класса.
         self.item = item
+        super().__init__(item.title)
         self.gestures = gestures or ItemGestures()
         # Категория, в панели которой лежит пункт: по ней решается, что делает
         # тап — внутри выделенной категории он выделяет пункт.
@@ -1233,7 +1275,12 @@ class ItemView(TitledView):
         # Название занимает всё место справа от чекбокса и переносится
         # на вторую строку внутри этой ширины.
         self.title_slot.expand = True
-        self.checkbox = ft.Checkbox(value=item.is_checked)
+        self.checkbox = create_item_checkbox(item)
+        # Отметку переключает сам чекбокс: тап по нему не доходит до жестов
+        # строки (вложенный распознаватель выигрывает арену), поэтому выделение
+        # от него не меняется. Что делать с отметкой (её можно менять только
+        # без выделения) решает приложение.
+        self.checkbox.on_change = view_event_handler(self.gestures.toggle, self)
         self.panel = create_item_panel(self.checkbox, self.title_slot)
         self.row = create_item_row(self.panel)
         # Ячейка в контейнере пунктов: строка вместе с промежутком до следующей
@@ -1246,13 +1293,13 @@ class ItemView(TitledView):
         # (порядок событий задаёт Flutter: сначала `start`).
         self.row.on_tap = item_event_handler(self.gestures.tap, self)
         self.row.on_long_press = item_event_handler(self.gestures.long_press, self)
-        self.row.on_long_press_start = item_drag_handler(
+        self.row.on_long_press_start = view_event_handler(
             self.gestures.drag_start, self
         )
-        self.row.on_long_press_move_update = item_drag_handler(
+        self.row.on_long_press_move_update = view_event_handler(
             self.gestures.drag_move, self
         )
-        self.row.on_long_press_end = item_drag_handler(self.gestures.drag_end, self)
+        self.row.on_long_press_end = view_event_handler(self.gestures.drag_end, self)
         self.row.on_long_press_cancel = item_event_handler(
             self.gestures.drag_cancel, self
         )
@@ -1301,7 +1348,7 @@ class ItemView(TitledView):
             self.category_view._sync_items_box()
 
     def create_title_text(self, title: str) -> ft.Text:
-        return create_item_title(title)
+        return create_item_title(title, checked=self.item.is_checked)
 
     def create_input(
         self, *, on_commit, value: str = "", on_tap_outside=None
@@ -1310,6 +1357,18 @@ class ItemView(TitledView):
 
     def save_title(self, storage: Storage, title: str) -> str:
         return storage.set_item_title(self.item.id, title)
+
+    def set_checked(self, checked: bool) -> None:
+        """Применяет отметку к строке: чекбокс и серый цвет отмеченного пункта.
+
+        Модель (`item`) и вид обновляются вместе: чекбокс показывает отметку из
+        модели, а название перекрашивается в серый. Размер и положение строки
+        при этом не меняются — меняются только цвета.
+        """
+        self.item = replace(self.item, is_checked=checked)
+        self.checkbox.value = checked
+        self.checkbox.active_color = ITEM_CHECKED_COLOR if checked else None
+        self.title_text.style = item_title_style(checked)
 
     def set_selected(self, selected: bool) -> None:
         """Выделенный пункт красится тем же цветом, что и выделенная категория."""
@@ -1449,6 +1508,7 @@ class ChecklistApp:
             drag_end=self._on_item_drag_end,
             drag_cancel=self._on_item_drag_cancel,
             tap=self._on_item_tap,
+            toggle=self.toggle_item_checked,
         )
         # Перетаскивание категории ведёт приложение: жест — долгое нажатие на
         # названии, дальше свои прокси, зазор и автопрокрутка по названию.
@@ -1637,6 +1697,44 @@ class ChecklistApp:
         view.set_selected(False)
         self._apply_item_orders({category.category.id: remaining})
         self._apply_selection()
+        self.page.update()
+
+    async def toggle_item_checked(
+        self, view: ItemView, event: ft.ControlEvent | None = None
+    ) -> None:
+        """Отметка пункта: тап по чекбоксу переключает состояние и пишет его в БД.
+
+        По спеке отметка переключается, только когда не выделена ни категория, ни
+        пункт (docs/features/feature-item.md): пока что-то выделено, тап по
+        чекбоксу — это тап по строке, и отметка меняться не должна. Клиент уже
+        показал новую отметку, поэтому в этом случае значение возвращается из
+        модели и уходит обратно клиенту.
+
+        Запись — до обновления экрана: при ошибке чекбокс и цвет названия
+        остаются прежними, показывается сообщение. Новое значение приходит из
+        хранилища, которое принимает его явно (`Storage.set_item_checked`), а не
+        инвертирует, так что повторное событие не перевернёт отметку обратно.
+        """
+        if (
+            self._selected_view is not None
+            or self._selected_item is not None
+            or self._editing_view is not None
+        ):
+            view.set_checked(view.item.is_checked)
+            self.page.update()
+            return
+        target = not view.item.is_checked
+        try:
+            checked = await asyncio.to_thread(
+                self.storage.set_item_checked, view.item.id, target
+            )
+        except Exception:
+            logger.exception("Не удалось сохранить отметку пункта")
+            self._show_message("Не удалось сохранить отметку")
+            view.set_checked(view.item.is_checked)
+            self.page.update()
+            return
+        view.set_checked(checked)
         self.page.update()
 
     async def delete_category(self, event: ft.ControlEvent | None = None) -> None:

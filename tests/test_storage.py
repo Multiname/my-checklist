@@ -760,3 +760,78 @@ def test_delete_unknown_item_is_rejected(tmp_path):
     finally:
         database.close()
 
+
+def test_set_item_checked_saves_explicit_value_and_survives_reopen(tmp_path):
+    """Отметка пишется явно и восстанавливается после перезапуска.
+
+    Значение передаётся аргументом, а не инвертируется в SQL: повторная запись
+    того же значения отметку не переворачивает (см. feature-storage.md).
+    """
+    db_path = tmp_path / "app.db"
+    database = storage.open_storage(db_path)
+    home = database.create_category("Дом")
+    first = database.create_item(home.id, "Молоко")
+    second = database.create_item(home.id, "Хлеб")
+
+    assert database.set_item_checked(first.id, True) is True
+    assert database.set_item_checked(first.id, True) is True
+    database.close()
+
+    database = storage.open_storage(db_path)
+    try:
+        assert [(item.title, item.is_checked) for item in database.list_items()] == [
+            ("Молоко", True),
+            ("Хлеб", False),
+        ]
+        assert database.list_items()[0].position == first.position
+        assert database.list_items()[1].position == second.position
+    finally:
+        database.close()
+
+
+def test_set_item_checked_can_be_cleared(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+        created = database.create_item(home.id, "Молоко")
+        database.set_item_checked(created.id, True)
+
+        assert database.set_item_checked(created.id, False) is False
+        assert database.list_items()[0].is_checked is False
+    finally:
+        database.close()
+
+
+def test_set_item_checked_does_not_touch_other_items(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+        work = database.create_category("Работа")
+        first = database.create_item(home.id, "Молоко")
+        other = database.create_item(home.id, "Хлеб")
+        report = database.create_item(work.id, "Отчёт")
+
+        database.set_item_checked(first.id, True)
+
+        assert [(item.id, item.is_checked) for item in database.list_items()] == [
+            (first.id, True),
+            (other.id, False),
+            (report.id, False),
+        ]
+    finally:
+        database.close()
+
+
+def test_set_item_checked_unknown_item_is_rejected(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+        created = database.create_item(home.id, "Посуда")
+
+        with pytest.raises(storage.StorageError):
+            database.set_item_checked(999, True)
+        # БД не изменилась: отметка прежняя.
+        assert database.list_items() == [created]
+    finally:
+        database.close()
+

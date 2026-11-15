@@ -235,6 +235,7 @@ class FakeStorage:
         self.moved_items = []
         self.deleted = []
         self.deleted_items = []
+        self.checked = []
         self.categories = []
         self.created_items = []
         self.item_titles = []
@@ -246,6 +247,7 @@ class FakeStorage:
         self.fail_delete_item = False
         self.fail_create_item = False
         self.fail_item_title = False
+        self.fail_check = False
         self.recovered_backup = None
         self._next_item_id = 1
 
@@ -308,6 +310,23 @@ class FakeStorage:
         if self.fail_item_title:
             raise storage.StorageError("нет места")
         return title
+
+    def set_item_checked(self, item_id, is_checked):
+        """Повторяет правила настоящего хранилища: проверка пункта и явное значение."""
+        self.checked.append((item_id, is_checked))
+        if self.fail_check:
+            raise storage.StorageError("нет места")
+        self.items = [
+            domain.Item(
+                id=item.id,
+                category_id=item.category_id,
+                title=item.title,
+                is_checked=(is_checked if item.id == item_id else item.is_checked),
+                position=item.position,
+            )
+            for item in self.items
+        ]
+        return is_checked
 
     def delete_item(self, item_id):
         """Повторяет правила настоящего хранилища: удаление и порядок без дыр."""
@@ -3648,3 +3667,131 @@ def test_delete_item_drops_its_input_state():
     assert app.button_area.visible is True
     assert page.views[0].can_pop is True
 
+
+# Отметка пунктов — задача 8 этапа 3.
+
+
+def test_checkbox_tap_marks_item_and_saves_it():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    page.updates = 0
+
+    asyncio.run(first.checkbox.on_change(None))
+
+    # Отметка записана в БД, чекбокс и модель показывают одно и то же.
+    assert app.storage.checked == [(first.item.id, True)]
+    assert first.item.is_checked is True
+    assert first.checkbox.value is True
+    # Отмеченный пункт серый: и название, и сама отметка.
+    assert first.title_text.style == main.ITEM_CHECKED_TITLE_STYLE
+    assert first.title_text.style.color == main.ITEM_CHECKED_COLOR
+    assert first.checkbox.active_color == main.ITEM_CHECKED_COLOR
+    # Тап по чекбоксу ничего не выделяет и не трогает соседний пункт.
+    assert app._selected_item is None
+    assert app._selected_view is None
+    assert first.selected is False
+    assert second.checkbox.value is False
+    assert second.title_text.style == main.ITEM_TITLE_STYLE
+    assert page.updates == 1
+
+
+def test_checkbox_tap_clears_mark():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    first.set_checked(True)
+
+    asyncio.run(first.checkbox.on_change(None))
+
+    assert app.storage.checked == [(first.item.id, False)]
+    assert first.item.is_checked is False
+    assert first.checkbox.value is False
+    assert first.checkbox.active_color is None
+    assert first.title_text.style == main.ITEM_TITLE_STYLE
+
+
+def test_checked_item_survives_a_restart():
+    """Отметка сохраняется в БД и восстанавливается при повторном запуске."""
+    page = FakePage()
+    storage = FakeStorage()
+    storage.categories = [category(1, "Дом")]
+    storage.items = [item(1, 1, "Молоко", is_checked=True)]
+    app = main.ChecklistApp(page, storage=storage, haptic=FakeHaptic())
+
+    asyncio.run(app.mount())
+
+    view = app.views[0].items[0]
+    assert view.checkbox.value is True
+    assert view.item.is_checked is True
+    assert view.title_text.style == main.ITEM_CHECKED_TITLE_STYLE
+
+
+def test_checkbox_tap_is_ignored_while_a_category_is_selected():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    app._select_category(home)
+    page.updates = 0
+
+    asyncio.run(first.checkbox.on_change(None))
+
+    # По спеке отметка меняется, только когда ничего не выделено.
+    assert app.storage.checked == []
+    assert first.item.is_checked is False
+    assert first.checkbox.value is False
+    assert first.title_text.style == main.ITEM_TITLE_STYLE
+    # Выделение категории тапом по чекбоксу не снимается.
+    assert app._selected_view is home
+    assert home.selected is True
+    assert page.updates == 1
+
+
+def test_checkbox_tap_is_ignored_while_an_item_is_selected():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    select_item(app, second)
+    page.updates = 0
+
+    asyncio.run(first.checkbox.on_change(None))
+
+    assert app.storage.checked == []
+    assert first.item.is_checked is False
+    assert first.checkbox.value is False
+    assert app._selected_item is second
+    assert second.selected is True
+
+
+def test_checkbox_tap_is_ignored_while_a_title_is_edited():
+    page, app, haptic, (home, work) = make_app("Дом", "Работа")
+    report = work.append_item(item(1, work.category.id, "Отчёт"))
+    app.storage.items = [report.item]
+    app._begin_title_input(home)
+
+    asyncio.run(report.checkbox.on_change(None))
+
+    assert app.storage.checked == []
+    assert report.item.is_checked is False
+    assert report.checkbox.value is False
+
+
+def test_checkbox_write_error_keeps_mark_and_reports():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    app.storage.fail_check = True
+
+    asyncio.run(first.checkbox.on_change(None))
+
+    # Коммит до UI: при ошибке отметка и цвет остаются прежними.
+    assert first.item.is_checked is False
+    assert first.checkbox.value is False
+    assert first.checkbox.active_color is None
+    assert first.title_text.style == main.ITEM_TITLE_STYLE
+    assert page.messages == ["Не удалось сохранить отметку"]
+
+
+def test_drag_proxy_shows_the_checked_look():
+    """Поднятая копия строки повторяет отметку и серый цвет пункта."""
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    first.set_checked(True)
+    measure(app)
+
+    pick_up_item(first)
+
+    proxy = app._item_drag.proxy
+    checkbox, title = proxy.content.controls
+    assert checkbox.value is True
+    assert checkbox.active_color == main.ITEM_CHECKED_COLOR
+    assert title.style == main.ITEM_CHECKED_TITLE_STYLE
