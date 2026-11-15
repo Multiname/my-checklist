@@ -317,6 +317,26 @@ class Storage:
                 affected.append(category_id)
             return {cid: self._read_items(cid) for cid in affected}
 
+    def delete_item(self, item_id: int) -> list[Item]:
+        """Удаляет пункт и возвращает оставшийся порядок его категории.
+
+        Позиции оставшихся пунктов материализуются заново, поэтому дыр в
+        порядке не остаётся; возвращённый список — источник истины для UI,
+        как и после ``move_item`` (см. docs/features/feature-storage.md).
+        Неизвестный ``id`` — ``StorageError``, БД при этом не меняется
+        (транзакция откатывается).
+        """
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT category_id FROM items WHERE id = ?", (item_id,)
+            ).fetchone()
+            if row is None:
+                raise StorageError(f"Пункт {item_id} не найден")
+            category_id = int(row["category_id"])
+            self._conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
+            _materialize_item_positions(self._conn, category_id)
+            return self._read_items(category_id)
+
     def _read_items(self, category_id: int) -> list[Item]:
         """Пункты одной категории в порядке отображения.
 

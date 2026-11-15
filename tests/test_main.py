@@ -234,6 +234,7 @@ class FakeStorage:
         self.moved = []
         self.moved_items = []
         self.deleted = []
+        self.deleted_items = []
         self.categories = []
         self.created_items = []
         self.item_titles = []
@@ -242,6 +243,7 @@ class FakeStorage:
         self.fail_move_item = False
         self.fail_save = False
         self.fail_delete = False
+        self.fail_delete_item = False
         self.fail_create_item = False
         self.fail_item_title = False
         self.recovered_backup = None
@@ -306,6 +308,36 @@ class FakeStorage:
         if self.fail_item_title:
             raise storage.StorageError("нет места")
         return title
+
+    def delete_item(self, item_id):
+        """Повторяет правила настоящего хранилища: удаление и порядок без дыр."""
+        self.deleted_items.append(item_id)
+        if self.fail_delete_item:
+            raise storage.StorageError("нет места")
+        deleted = next(item for item in self.items if item.id == item_id)
+        category_id = deleted.category_id
+        remaining = sorted(
+            (
+                item
+                for item in self.items
+                if item.category_id == category_id and item.id != item_id
+            ),
+            key=lambda item: item.position,
+        )
+        orders = [
+            domain.Item(
+                id=item.id,
+                category_id=category_id,
+                title=item.title,
+                is_checked=item.is_checked,
+                position=index,
+            )
+            for index, item in enumerate(remaining)
+        ]
+        self.items = [
+            item for item in self.items if item.category_id != category_id
+        ] + orders
+        return orders
 
     def move_item(self, item_id, category_id, new_position):
         """Повторяет правила настоящего хранилища: порядок в обеих категориях."""
@@ -1620,6 +1652,7 @@ def make_app_with_items():
     page, app, haptic, (home, work) = make_app("Дом", "Работа")
     first = home.append_item(item(1, home.category.id, "Молоко"))
     second = home.append_item(item(2, home.category.id, "Хлеб", position=1))
+    app.storage.items = [first.item, second.item]
     return page, app, haptic, home, work, first, second
 
 
@@ -3510,3 +3543,108 @@ def test_tap_outside_item_rename_saves_and_keeps_item_selection():
     assert first.selected is True
     assert home.selected is False
     assert app._tap_ended_input is False
+
+
+# Удаление пункта — задача 6 этапа 3.
+
+
+def test_trash_button_deletes_item_with_item_selection():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    select_item(app, first)
+
+    assert app.trash_button.on_click == app.delete_item
+    assert app.trash_button.content.semantics_label == main.LABEL_DELETE_ITEM
+
+
+def test_delete_item_removes_selected_item_from_list_and_storage():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    select_item(app, first)
+
+    asyncio.run(app.delete_item(None))
+
+    # Пункт удалён из БД и из строк категории, порядок взят из хранилища.
+    assert app.storage.deleted_items == [first.item.id]
+    assert [view.title for view in home.items] == ["Хлеб"]
+    assert home.items_box.content.controls == [second.cell]
+    assert home.items_box.visible is True
+    # Выделение снято: кнопки вернулись к исходному составу.
+    assert app._selected_item is None
+    assert first.selected is False
+    assert app._selected_view is None
+    assert app.button_area.visible is True
+    assert app.plus_button.on_click == app.create_category
+    assert app.pencil_button.visible is False
+    assert app.trash_button.visible is False
+    assert app.trash_button.on_click == app.delete_category
+    assert page.views[0].can_pop is True
+
+
+def test_delete_item_keeps_items_of_other_categories():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    report = work.append_item(item(3, work.category.id, "Отчёт"))
+    select_item(app, first)
+
+    asyncio.run(app.delete_item(None))
+
+    assert [view.title for view in home.items] == ["Хлеб"]
+    assert [view.title for view in work.items] == ["Отчёт"]
+    assert work.items_box.content.controls == [report.cell]
+
+
+def test_delete_item_without_item_selection_does_nothing():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    app._select_category(home)
+
+    asyncio.run(app.delete_item(None))
+
+    assert app.storage.deleted_items == []
+    assert [view.title for view in home.items] == ["Молоко", "Хлеб"]
+    assert home.items_box.visible is True
+
+
+def test_delete_item_write_error_keeps_item_and_reports():
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    select_item(app, first)
+    app.storage.fail_delete_item = True
+
+    asyncio.run(app.delete_item(None))
+
+    # Коммит до UI: при ошибке строка и выделение остаются прежними.
+    assert [view.title for view in home.items] == ["Молоко", "Хлеб"]
+    assert home.items_box.content.controls == [first.cell, second.cell]
+    assert app._selected_item is first
+    assert first.selected is True
+    assert page.messages == ["Не удалось удалить пункт"]
+    assert app.trash_button.on_click == app.delete_item
+
+
+def test_delete_last_item_hides_the_items_box():
+    page, app, haptic, (home,) = make_app("Дом")
+    only = home.append_item(item(1, home.category.id, "Молоко"))
+    app.storage.items = [only.item]
+    select_item(app, only)
+
+    asyncio.run(app.delete_item(None))
+
+    assert home.items == []
+    assert home.items_box.content.controls == []
+    assert home.items_box.visible is False
+    # Панель снова выглядит как категория без пунктов.
+    assert home.panel.padding == main.CATEGORY_PANEL_PADDING
+
+
+def test_delete_item_drops_its_input_state():
+    """Удаление пункта убирает и ввод его названия (страховка от рассинхронизации)."""
+    page, app, haptic, home, work, first, second = make_app_with_items()
+    select_item(app, first)
+    field = app._begin_title_input(first, first.title)
+
+    asyncio.run(app.delete_item(None))
+
+    assert field.value == "Молоко"
+    assert app._editing_view is None
+    assert app._selected_item is None
+    assert [view.title for view in home.items] == ["Хлеб"]
+    assert app.button_area.visible is True
+    assert page.views[0].can_pop is True
+

@@ -1602,6 +1602,43 @@ class ChecklistApp:
             return
         await self._start_title_input(view, initial=view.title)
 
+    async def delete_item(self, event: ft.ControlEvent | None = None) -> None:
+        """delete_item: удаляет выделенный пункт из списка и из БД.
+
+        Запись в БД — до обновления экрана: при ошибке пункт остаётся на месте
+        и показывается сообщение. Выделение снимается: удалённого пункта больше
+        нет, кнопки возвращаются к исходному составу. Порядок оставшихся берётся
+        из БД, как и после перетаскивания, поэтому дыр в позициях не остаётся.
+        """
+        view = self._selected_item
+        if view is None:
+            # Кнопка показана только при выделенном пункте.
+            return
+        category = view.category_view
+        if category is None or view not in category.items:
+            return
+        editing = self._editing_view
+        if editing is view:
+            # Ввод названия скрывает button_area целиком, так что сюда не
+            # попадают; если состояние всё же такое, поле уходит вместе со
+            # строкой, а не остаётся фокусом у несуществующего пункта.
+            editing.input = None
+            self._editing_view = None
+            self._keyboard_open = False
+        try:
+            remaining = await asyncio.to_thread(
+                self.storage.delete_item, view.item.id
+            )
+        except Exception:
+            logger.exception("Не удалось удалить пункт")
+            self._show_message("Не удалось удалить пункт")
+            return
+        self._selected_item = None
+        view.set_selected(False)
+        self._apply_item_orders({category.category.id: remaining})
+        self._apply_selection()
+        self.page.update()
+
     async def delete_category(self, event: ft.ControlEvent | None = None) -> None:
         """delete_category: удаляет выделенную категорию из списка и из БД.
 
@@ -2661,14 +2698,13 @@ class ChecklistApp:
         категорией. При выделенном пункте плюс снова создаёт категорию —
         категория в этот момент не выделена (см.
         docs/features/feature-button-area.md), — а карандаш и корзина работают
-        с пунктом. `delete_item` пока заглушка: её обработчик появится на
-        задаче 6 этапа 3.
+        с пунктом.
         """
         if self._selected_item is not None:
             return (
                 ButtonAction(LABEL_CREATE_CATEGORY, self.create_category),
                 ButtonAction(LABEL_RENAME_ITEM, self.rename_item),
-                ButtonAction(LABEL_DELETE_ITEM),
+                ButtonAction(LABEL_DELETE_ITEM, self.delete_item),
             )
         if self._selected_view is not None:
             return (

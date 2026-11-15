@@ -625,3 +625,104 @@ def test_move_item_to_unknown_category_is_rejected(tmp_path):
         assert database.list_items() == [created]
     finally:
         database.close()
+
+
+def test_delete_item_removes_it_and_keeps_positions_continuous(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+        first = database.create_item(home.id, "Первый")
+        second = database.create_item(home.id, "Второй")
+        third = database.create_item(home.id, "Третий")
+
+        remaining = database.delete_item(second.id)
+
+        assert remaining == [
+            domain.Item(
+                id=first.id,
+                category_id=home.id,
+                title="Первый",
+                is_checked=False,
+                position=0,
+            ),
+            domain.Item(
+                id=third.id,
+                category_id=home.id,
+                title="Третий",
+                is_checked=False,
+                position=1,
+            ),
+        ]
+        assert database.list_items() == remaining
+    finally:
+        database.close()
+
+
+def test_delete_item_keeps_other_categories_untouched(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+        work = database.create_category("Работа")
+        home_first = database.create_item(home.id, "Посуда")
+        home_second = database.create_item(home.id, "Пылесос")
+        work_first = database.create_item(work.id, "Отчёт")
+
+        remaining = database.delete_item(home_first.id)
+
+        assert [item.id for item in remaining] == [home_second.id]
+        assert database.list_items() == [
+            domain.Item(
+                id=home_second.id,
+                category_id=home.id,
+                title="Пылесос",
+                is_checked=False,
+                position=0,
+            ),
+            domain.Item(
+                id=work_first.id,
+                category_id=work.id,
+                title="Отчёт",
+                is_checked=False,
+                position=0,
+            ),
+        ]
+    finally:
+        database.close()
+
+
+def test_deleted_item_stays_deleted_after_reopen(tmp_path):
+    db_path = tmp_path / "app.db"
+    database = storage.open_storage(db_path)
+    home = database.create_category("Дом")
+    first = database.create_item(home.id, "Первый")
+    second = database.create_item(home.id, "Второй")
+    database.delete_item(first.id)
+    database.close()
+
+    database = storage.open_storage(db_path)
+    try:
+        assert database.list_items() == [
+            domain.Item(
+                id=second.id,
+                category_id=home.id,
+                title="Второй",
+                is_checked=False,
+                position=0,
+            )
+        ]
+    finally:
+        database.close()
+
+
+def test_delete_unknown_item_is_rejected(tmp_path):
+    database = open_db(tmp_path)
+    try:
+        home = database.create_category("Дом")
+        created = database.create_item(home.id, "Посуда")
+
+        with pytest.raises(storage.StorageError):
+            database.delete_item(999)
+        assert database.list_items() == [created]
+    finally:
+        database.close()
+
