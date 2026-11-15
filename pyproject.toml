@@ -17,7 +17,8 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# src — код приложения, tests — общие фейки тестов (support.py).
+pythonpath = ["src", "tests"]
 # Кэш pytest отключён: в ограниченном режиме песочницы DSH его временные
 # каталоги (0700) становятся недоступны процессу. См. docs/Environment.md.
 addopts = "-p no:cacheprovider"

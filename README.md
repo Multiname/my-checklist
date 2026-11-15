@@ -63,6 +63,13 @@ cmd /c "tools\run_on_device.cmd -DeviceId <id> -Attach"
 .venv\Scripts\python.exe -m pytest
 ```
 
-257 тестов. Тесты хранилища используют `tmp_path` и требуют полного доступа к
+261 тест. Тесты хранилища используют `tmp_path` и требуют полного доступа к
 файловой системе — [docs/Environment.md](docs/Environment.md), «Ограничения
 песочницы».
+
+## Структура
+
+Код — в `src`: точка входа `src/main.py`, интерфейс — пакет `src/ui`
+(параметры, шаблоны контролов, виды, перетаскивание и экран), домен и хранилище —
+`src/domain.py` и `src/storage.py`. Карта пакета — [src/ui/__init__.py](src/ui/__init__.py),
+подробности — [docs/Project.md](docs/Project.md), «Структура проекта».

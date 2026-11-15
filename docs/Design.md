@@ -67,7 +67,7 @@
 постоянные, при смене выделения меняется только действие кнопки.
 
 ### Константы button_area
-Заданы в `src/main.py`: `BUTTON_SIZE`, `BUTTON_ICON_SIZE`, `BUTTON_SPACING`,
+Заданы в `src/ui/theme.py`: `BUTTON_SIZE`, `BUTTON_ICON_SIZE`, `BUTTON_SPACING`,
 `BUTTON_AREA_MARGIN`.
 
 ## Список категорий
@@ -91,7 +91,7 @@
   прокручивал список к концу уже при запуске
 
 ## Категория
-Шаблон — `create_category_panel()` и `create_category_title()` в `src/main.py`.
+Шаблон — `create_category_panel()` и `create_category_title()` в `src/ui/controls.py`.
 
 - Панель: скруглённый прямоугольник (радиус **12**), фон
   `ft.Colors.SURFACE_CONTAINER_HIGH`, вертикальные отступы **12**, ширина — вся
@@ -165,7 +165,7 @@
   ([feature-category.md](features/feature-category.md))
 
 ### Константы списка и категории
-Заданы в `src/main.py`: `LIST_PADDING`, `LIST_BOTTOM_PADDING`,
+Заданы в `src/ui/theme.py`: `LIST_PADDING`, `LIST_BOTTOM_PADDING`,
 `CATEGORY_SPACING`, `CATEGORY_ITEM_PADDING`, `PANEL_HORIZONTAL_PADDING`,
 `CATEGORY_PANEL_COLOR`, `CATEGORY_PANEL_SELECTED_COLOR`, `CATEGORY_PANEL_RADIUS`,
 `CATEGORY_PANEL_VERTICAL_PADDING`, `CATEGORY_PANEL_PADDING`,
@@ -175,7 +175,7 @@
 
 ## Пункт
 Шаблон — `create_item_panel()`, `create_item_row()`, `create_item_title()` и
-`create_items_box()` в `src/main.py`; пункты лежат внутри панели категории, под
+`create_items_box()` в `src/ui/controls.py`; пункты лежат внутри панели категории, под
 её названием.
 
 - Контейнер пунктов (`create_items_box()`): отступ от названия **8**,
@@ -325,7 +325,7 @@
   отметка и цвет меняются сразу
 
 ### Константы пункта
-Заданы в `src/main.py`: `ITEM_TITLE_SIZE`, `ITEM_TITLE_WEIGHT`,
+Заданы в `src/ui/theme.py`: `ITEM_TITLE_SIZE`, `ITEM_TITLE_WEIGHT`,
 `ITEM_TITLE_LINE_HEIGHT`, `ITEM_TITLE_STYLE`, `ITEM_HINT_STYLE`,
 `ITEM_CHECKED_COLOR`, `ITEM_CHECKED_TITLE_STYLE`, `ITEM_PANEL_COLOR`,
 `ITEM_PANEL_SELECTED_COLOR`, `ITEM_PANEL_PADDING`, `ITEM_SPACING`,

@@ -7,33 +7,47 @@
 перед выпуском — в [KnownIssues.md](KnownIssues.md).
 
 ## Как читать этот документ
-| Функция | Спека | Раздел здесь | Код (`src/main.py`) | Задача |
+Символы в колонке «Код» даны без пакета: это `src/ui/<модуль>.py` для
+кода экрана и `src/<модуль>.py` для домена и хранилища.
+
+| Функция | Спека | Раздел здесь | Код | Задача |
 |---|---|---|---|---|
-| Кнопки `button_area` | [feature-button-area.md](features/feature-button-area.md) | [три слота](#button_area-три-переиспользуемых-слота) | `ButtonAction`, `bind_button()`, `create_button_area()`, `_actions()`, `_apply_selection()` | 2/1, 3/1 |
-| Создание категории | [feature-category.md](features/feature-category.md) | [создание категории](#создание-категории) | `create_category()`, `_append_category()` | 2/2 |
-| Выделение категории | [feature-category.md](features/feature-category.md) | [выделение категории](#выделение-категории) | `_select_category()`, `CategoryView.set_selected()` | 2/3 |
-| Переименование категории | [feature-category.md](features/feature-category.md) | [ввод названия](#ввод-названия-общая-машинерия) | `rename_category()`, `TitledView` | 2/5 |
-| Удаление категории | [feature-category.md](features/feature-category.md) | [удаление категории](#удаление-категории) | `delete_category()`, `_remove_view()` | 2/6 |
-| Перетаскивание категорий | [feature-category.md](features/feature-category.md) | [перетаскивание категорий](#перетаскивание-категорий) | `_on_category_*`, `CategoryDrag`, `build_category_spans()` | 2/4, 3/4 |
-| Добавление пункта | [feature-item.md](features/feature-item.md) | [добавление пункта](#добавление-пункта) | `add_item()`, `create_item_panel()`, `create_items_box()` | 3/2 |
-| Выделение пункта | [feature-item.md](features/feature-item.md) | [выделение пункта](#выделение-пункта) | `_select_item()`, `_on_item_tap()` | 3/3 |
-| Перетаскивание пунктов | [feature-item.md](features/feature-item.md) | [перетаскивание пунктов](#перетаскивание-пунктов) | `_on_item_*`, `ItemDrag`, `build_drag_spans()`, `drag_slot_at()` | 3/4 |
-| Переименование пункта | [feature-item.md](features/feature-item.md) | [ввод названия](#ввод-названия-общая-машинерия) | `rename_item()` | 3/5 |
-| Удаление пункта | [feature-item.md](features/feature-item.md) | [удаление пункта](#удаление-пункта) | `delete_item()` | 3/6 |
-| Каскад пунктов | [feature-storage.md](features/feature-storage.md) | [удаление вместе с категорией](#удаление-пунктов-вместе-с-категорией) | `Storage.delete_category()` | 3/7 |
-| Отметка пункта | [feature-item.md](features/feature-item.md) | [отметка пункта](#отметка-пункта) | `toggle_item_checked()`, `create_checkbox_blocker()` | 3/8 |
+| Кнопки `button_area` | [feature-button-area.md](features/feature-button-area.md) | [три слота](#button_area-три-переиспользуемых-слота) | `actions.ButtonAction`, `actions.bind_button()`, `actions.create_button_area()`, `app._actions()`, `app._apply_selection()` | 2/1, 3/1 |
+| Создание категории | [feature-category.md](features/feature-category.md) | [создание категории](#создание-категории) | `app.create_category()`, `app._append_category()` | 2/2 |
+| Выделение категории | [feature-category.md](features/feature-category.md) | [выделение категории](#выделение-категории) | `app._select_category()`, `views.CategoryView.set_selected()` | 2/3 |
+| Переименование категории | [feature-category.md](features/feature-category.md) | [ввод названия](#ввод-названия-общая-машинерия) | `app.rename_category()`, `views.TitledView` | 2/5 |
+| Удаление категории | [feature-category.md](features/feature-category.md) | [удаление категории](#удаление-категории) | `app.delete_category()`, `app._remove_view()` | 2/6 |
+| Перетаскивание категорий | [feature-category.md](features/feature-category.md) | [перетаскивание категорий](#перетаскивание-категорий) | `app._on_category_*()`, `drag.CategoryDrag`, `geometry.build_category_spans()` | 2/4, 3/4 |
+| Добавление пункта | [feature-item.md](features/feature-item.md) | [добавление пункта](#добавление-пункта) | `app.add_item()`, `controls.create_item_panel()`, `controls.create_items_box()` | 3/2 |
+| Выделение пункта | [feature-item.md](features/feature-item.md) | [выделение пункта](#выделение-пункта) | `app._select_item()`, `app._on_item_tap()` | 3/3 |
+| Перетаскивание пунктов | [feature-item.md](features/feature-item.md) | [перетаскивание пунктов](#перетаскивание-пунктов) | `app._on_item_*()`, `drag.ItemDrag`, `geometry.build_drag_spans()`, `geometry.drag_slot_at()` | 3/4 |
+| Переименование пункта | [feature-item.md](features/feature-item.md) | [ввод названия](#ввод-названия-общая-машинерия) | `app.rename_item()` | 3/5 |
+| Удаление пункта | [feature-item.md](features/feature-item.md) | [удаление пункта](#удаление-пункта) | `app.delete_item()` | 3/6 |
+| Каскад пунктов | [feature-storage.md](features/feature-storage.md) | [удаление вместе с категорией](#удаление-пунктов-вместе-с-категорией) | `storage.Storage.delete_category()` | 3/7 |
+| Отметка пункта | [feature-item.md](features/feature-item.md) | [отметка пункта](#отметка-пункта) | `app.toggle_item_checked()`, `controls.create_checkbox_blocker()` | 3/8 |
 | Хранение | [feature-storage.md](features/feature-storage.md) | [хранение данных](#хранение-данных) | `src/storage.py` | 2/2 |
-| Прокрутка | [feature-scroll.md](features/feature-scroll.md) | [автопрокрутка](#автопрокрутка-при-перетаскивании) | `_on_scroll()`, `_update_autoscroll()`, `_scroll_to_edge()` | 2/4, 3/4 |
+| Прокрутка | [feature-scroll.md](features/feature-scroll.md) | [автопрокрутка](#автопрокрутка-при-перетаскивании) | `app._on_scroll()`, `app._update_autoscroll()`, `app._scroll_to_edge()` | 2/4, 3/4 |
 
 ## Структура проекта
 | Путь | Назначение |
 |---|---|
 | `pyproject.toml` | метаданные проекта, зависимости, настройки pytest и Flet |
-| `src/main.py` | всё приложение: константы, шаблоны контролов, `CategoryView`/`ItemView`, `ChecklistApp` |
+| `src/main.py` | точка входа: заголовок и тема окна, открытие хранилища, `ChecklistApp.mount()` |
+| `src/ui/__init__.py` | карта пакета `ui`: что в каком модуле и в каком порядке они зависят друг от друга |
+| `src/ui/theme.py` | параметры внешнего вида: размеры, цвета, стили, тексты, пороги (значения — [Design.md](Design.md)) |
+| `src/ui/compat.py` | обход ошибки flet 1.1.2 в событии движения после долгого нажатия |
+| `src/ui/actions.py` | действия и кнопки `button_area` |
+| `src/ui/gestures.py` | жесты пункта и категории, обёртки обработчиков событий |
+| `src/ui/controls.py` | шаблоны контролов: панели, строки, список, поля ввода, зазоры, прокси |
+| `src/ui/geometry.py` | раскладка списка при перетаскивании: полосы, зазоры, места вставки |
+| `src/ui/views.py` | `TitledView`, `CategoryView`, `ItemView` — состояние одного элемента |
+| `src/ui/drag.py` | `ItemDrag`, `CategoryDrag` — состояние перетаскивания |
+| `src/ui/app.py` | `ChecklistApp` — экран целиком: выделение, ввод названий, оба перетаскивания |
 | `src/domain.py` | доменные правила: `Category`, `Item`, `normalize_title()`; не зависит от UI и БД |
 | `src/storage.py` | SQLite-хранилище: схема, миграции, операции с категориями и пунктами |
 | `src/assets/icons/` | иконки кнопок `button_area` (`.webp`, 64×64) |
-| `tests/` | тесты (`pytest`, `pythonpath = ["src"]`): домен, хранилище, параметры UI |
+| `tests/` | тесты (`pytest`, `pythonpath = ["src", "tests"]`): домен, хранилище, экран |
+| `tests/support.py` | общие фейки и помощники тестов: страница, хранилище, события жестов |
 | `tools/run_on_device.ps1` | запуск приложения на телефоне по USB: toolchain, adb, `flet debug android` |
 | `tools/run_on_device.cmd` | обёртка для обхода политики запуска сценариев PowerShell |
 | `.agents/skills/run-on-device/SKILL.md` | скилл агента: как запускать приложение на телефоне |
@@ -47,8 +61,19 @@
 (`mount()`); пустой список — пустой экран. Каждая категория показывает свои
 пункты внутри панели, под названием (см. [Design.md](Design.md), «Пункт»).
 
-Всё состояние — в `ChecklistApp`; шаблоны контролов — функции модуля (`create_*`),
-состояние одного элемента — `CategoryView`/`ItemView`.
+Всё состояние экрана — в `ChecklistApp` (`src/ui/app.py`); шаблоны контролов —
+функции `src/ui/controls.py` (`create_*`), состояние одного элемента —
+`CategoryView`/`ItemView` из `src/ui/views.py`. Модули пакета `ui` читаются в
+порядке зависимостей: от параметров и шаблонов к видам и экрану
+(карта — [src/ui/__init__.py](../src/ui/__init__.py)).
+
+`ChecklistApp` намеренно один класс, а не несколько: выделение, ввод названия и
+оба перетаскивания делят одно состояние (`_selected_view`, `_editing_view`,
+`_item_drag`, `_category_drag`), и разделение по объектам потребовало бы либо
+перекрёстных ссылок, либо общего контейнера состояния. Внутри методы собраны
+блоками в порядке работы: ввод названия, операции с данными, выделение и кнопки,
+общая часть перетаскивания, перетаскивание категории, перетаскивание пункта,
+прокрутка; блоки отделены комментариями.
 
 | Поле `ChecklistApp` | Что хранит |
 |---|---|
@@ -69,9 +94,9 @@
 не заслоняют список. Видимость переключает `_apply_selection()`.
 
 Ассеты — `src/assets`; `flet run` и `flet build` ищут каталог `assets` относительно
-`main.py`, поэтому в коде пути указываются от него:
-`ft.Image(src="icons/plus-sign.webp")`. Тест `tests/test_main.py` проверяет,
-что файлы иконок на месте.
+точки входа `src/main.py`, поэтому в коде пути указываются от него:
+`ft.Image(src="icons/plus-sign.webp")`. Тест `tests/test_button_area.py`
+проверяет, что файлы иконок на месте.
 
 Идентификация приложения — в `[tool.flet]`: `org = "com.blackline"` (организация
 Blackline) даёт префикс Android-идентификатора, `product = "My checklist"` —
@@ -589,10 +614,11 @@ Blackline) даёт префикс Android-идентификатора, `produc
   сворачивается панель под ним.
 - Обход ошибки flet 1.1.2: клиент присылает `offset_from_origin` под именем `ofo`,
   а `LongPressMoveUpdateEvent` ждёт `of`, и разбор события падает с `TypeError`
-  (проверено на устройстве). `_patch_long_press_move_event()` подставляет нулевое
-  смещение при создании события; обработчику нужны только
-  `local_position`/`global_position`. Патч можно убрать, когда ошибка исправлена в
-  flet.
+  (проверено на устройстве). `compat.patch_long_press_move_event()`
+  (`src/ui/compat.py`) подставляет нулевое смещение при создании события;
+  обработчику нужны только `local_position`/`global_position`. Патч вызывается один
+  раз из `src/main.py` и ничего не делает при повторном вызове. Убрать его можно,
+  когда ошибка исправлена в flet.
 
 ## Хранение данных
 Слой — `src/storage.py`, правила схемы и операций —
@@ -646,18 +672,28 @@ Blackline) даёт префикс Android-идентификатора, `produc
 |---|---|
 | Запуск на десктопе (обычный терминал) | `.venv\Scripts\flet.exe run` из корня проекта |
 | Запуск в песочнице DSH | `$env:USERPROFILE = "$PWD\.flet\home"` перед запуском — см. [Environment.md](Environment.md) |
-| Тесты | `.venv\Scripts\python.exe -m pytest` — 257 тестов |
+| Тесты | `.venv\Scripts\python.exe -m pytest` — 261 тест |
 | Список тестов | `.venv\Scripts\python.exe -m pytest --collect-only -q` |
 | Сборка и запуск на телефоне | `cmd /c "tools\run_on_device.cmd -DeviceId <id>"` — см. ниже |
 
-Тесты (`pytest`, `pythonpath = ["src"]`, 257 штук) покрывают домен, хранилище и
-параметры UI-шаблонов:
+Тесты (`pytest`, `pythonpath = ["src", "tests"]`, 261 штука) покрывают домен,
+хранилище и экран. Файлы повторяют модули `ui`, общие фейки — в `support.py`:
 
 | Файл | Что проверяет |
 |---|---|
+| `tests/support.py` | общие фейки (`FakePage`, `FakeStorage`, `FakeHaptic`), фабрики `make_app()`/`item()` и события жестов; тестов здесь нет |
+| `tests/test_entry.py` | точка входа: `main(page)` собирает экран, открывает данные и регистрирует сервисы страницы |
+| `tests/test_button_area.py` | три постоянных слота, подписи для TalkBack, нажатия, иконки в ассетах |
+| `tests/test_controls.py` | шаблоны панели категории, элемента списка, списка и поля ввода |
+| `tests/test_keyboard.py` | видимость клавиатуры на Android и завершение ввода её скрытием |
+| `tests/test_categories.py` | категории: выделение, ввод названия, переименование, удаление, перетаскивание; пункты внутри панели |
+| `tests/test_items.py` | пункты: шаблон строки, добавление, выделение, переименование, удаление |
+| `tests/test_item_drag.py` | перетаскивание пунктов: раскладка, зазор, прокси, пороги, порядок |
+| `tests/test_category_drag.py` | перетаскивание категорий: прокси, зазор на месте вставки, сохранение порядка |
+| `tests/test_autoscroll.py` | автопрокрутка списка: зона у краёв экрана, проход до края, продолжение и кеш списка |
+| `tests/test_checkbox.py` | отметка пункта, запирающий слой и восстановление отметки |
 | `tests/test_domain.py` | нормализация названий, дефолтные имена, модели домена |
 | `tests/test_storage.py` | схема и миграции, порядок `position` без дыр, перемещение категорий и пунктов (в том числе между категориями), каскад удаления, идемпотентность отметки, ошибки на неизвестном `id`; использует `tmp_path` |
-| `tests/test_main.py` | шаблоны и константы UI, машинерия ввода названия и скрытия клавиатуры, видимость и действия трёх слотов `button_area`, выделение категории и пункта, перетаскивание категорий и пунктов (раскладка, зазор, прокси, пороги, автопрокрутка, кеш списка), добавление, переименование, удаление, отметка пункта |
 
 Тесты хранилища используют `tmp_path`, поэтому требуют полного доступа — см.
 [Environment.md](Environment.md), «Ограничения песочницы».

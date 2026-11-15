@@ -206,7 +206,7 @@ cat files/data/app.db` вместе с `-wal`) после перетаскива
 и `on_reorder_end`); прокрутка списка работает; ошибок в логе нет.
 Обнаруженная на устройстве ошибка flet 1.1.2 (`LongPressMoveUpdateEvent`
 падал на `offset_from_origin`, клиент присылает его как `ofo`) закрыта
-обходом `_patch_long_press_move_event()` и проверена повторной сборкой.
+обходом `_patch_long_press_move_event()` (сейчас `ui.compat.patch_long_press_move_event()`) и проверена повторной сборкой.
 
 Проверено на CPH2747 после доработки задачи 4 этапа 3 (поднятый пункт, зазор,
 автопрокрутка; сборка `assembleDebug` ≈20 с, установка ≈8 с, данные — 8
