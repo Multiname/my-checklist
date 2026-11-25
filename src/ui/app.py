@@ -1119,12 +1119,12 @@ class ChecklistApp:
                     control = view.item
                     margin = ft.Margin.only(bottom=drag.slot_height)
                     break
-        if control is self._category_gap_control:
-            # Зазор уже здесь: переставлять и перерисовывать нечего.
-            return
-        self._clear_category_gap()
+        if control is not self._category_gap_control:
+            self._clear_category_gap()
         if control is None:
             return
+        # У последней оставшейся панели зазор может перейти на другой край
+        # той же обёртки. В этом случае достаточно одного точечного патча.
         control.margin = margin
         self._category_gap_control = control
         self._drag_controls.append(control)

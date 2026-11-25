@@ -194,11 +194,28 @@ def test_category_drag_puts_the_gap_at_the_end_of_the_list():
     pick_up_category(app, home)
     drag = app._category_drag
 
-    drag_category_to(app, home, 10_000)
+    drag_category_to(app, home, 120)
+    assert rest.item.margin == ft.Margin.only(top=drag.slot_height)
+
+    drag_category_to(app, home, 500)
 
     assert drag.target == 2
     # Место — конец списка: зазор становится нижним отступом последней панели.
     assert rest.item.margin == ft.Margin.only(bottom=drag.slot_height)
+
+
+def test_last_category_drag_moves_the_gap_before_the_previous_panel():
+    page, app, haptic, (home, work, rest) = make_app("Дом", "Работа", "Отдых")
+    measure(app)
+    pick_up_category(app, rest)
+    drag = app._category_drag
+    assert work.item.margin == ft.Margin.only(bottom=drag.slot_height)
+
+    # Первое движение выше середины «Работы» переносит зазор перед ней.
+    drag_category_to(app, rest, 100)
+
+    assert drag.target == 1
+    assert work.item.margin == ft.Margin.only(top=drag.slot_height)
 
 
 def test_dragged_category_never_gets_a_margin():
