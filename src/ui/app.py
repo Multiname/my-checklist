@@ -719,14 +719,12 @@ class ChecklistApp:
 
         Без выделения виден только плюс — создание категории. При выделенной
         категории плюс добавляет пункт, а карандаш и корзина работают с этой
-        категорией. При выделенном пункте плюс снова создаёт категорию —
-        категория в этот момент не выделена (см.
-        docs/features/feature-button-area.md), — а карандаш и корзина работают
-        с пунктом.
+        категорией. При выделенном пункте плюс скрыт, а карандаш и корзина
+        работают с пунктом.
         """
         if self._selected_item is not None:
             return (
-                ButtonAction(LABEL_CREATE_CATEGORY, self.create_category),
+                ButtonAction(LABEL_CREATE_CATEGORY, self.create_category, visible=False),
                 ButtonAction(LABEL_RENAME_ITEM, self.rename_item),
                 ButtonAction(LABEL_DELETE_ITEM, self.delete_item),
             )

@@ -532,9 +532,9 @@ def test_buttons_switch_between_category_and_item_selection():
 
     asyncio.run(app._on_item_long_press(first))
 
-    # Выделен пункт: плюс создаёт категорию, карандаш и корзина — пункт.
+    # Выделен пункт: плюс скрыт, карандаш и корзина работают с пунктом.
     assert slot_actions(app) == [
-        (theme.LABEL_CREATE_CATEGORY, app.create_category, True),
+        (theme.LABEL_CREATE_CATEGORY, app.create_category, False),
         (theme.LABEL_RENAME_ITEM, app.rename_item, True),
         (theme.LABEL_DELETE_ITEM, app.delete_item, True),
     ]
@@ -680,7 +680,7 @@ def test_rename_item_saves_title_and_keeps_item_selection():
     assert app._selected_view is None
     assert app.button_area.visible is True
     assert slot_actions(app) == [
-        (theme.LABEL_CREATE_CATEGORY, app.create_category, True),
+        (theme.LABEL_CREATE_CATEGORY, app.create_category, False),
         (theme.LABEL_RENAME_ITEM, app.rename_item, True),
         (theme.LABEL_DELETE_ITEM, app.delete_item, True),
     ]
