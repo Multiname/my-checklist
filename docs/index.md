@@ -6,20 +6,20 @@
 
 Пункты могут существовать только в рамках какой-то категории. Изначально пользователю доступно только создание новых категорий. Во время добавления категории ей можно задать название.
 
-![screenshot_1](./index/screenshot_1.jpg) ![screenshot_2](./index/screenshot_2.jpg)
+<img src="index/screenshot_1.jpg" style="width:60%; border: 2px solid black;"> <img src="index/screenshot_2.jpg" style="width:60%; border: 2px solid black;">
 
 Категории можно выделять долгим нажатием. После выбора категории пользователю предоставляется возможность переименовать или удалить категорию, а также добавить в нее новый пункт.
 
-![screenshot_3](./index/screenshot_3.jpg) ![screenshot_4](./index/screenshot_4.jpg)
+<img src="index/screenshot_3.jpg" style="width:60%; border: 2px solid black;"> <img src="index/screenshot_4.jpg" style="width:60%; border: 2px solid black;">
 
 Во время добавления пунктов им тоже можно задать название.
 
-![screenshot_5](./index/screenshot_5.jpg)
+<img src="index/screenshot_5.jpg" style="width:60%; border: 2px solid black;">
 
 Пункты тоже можно выделять долгим нажатием. Также пункт можно выбрать простым тапом, если он находится внутри выделенной категории. Выбранный пункт можно переименовать или удалить. У пунктов можно менять состояние отметки.
 
-![screenshot_6](./index/screenshot_6.jpg) ![screenshot_7](./index/screenshot_7.jpg)
+<img src="index/screenshot_6.jpg" style="width:60%; border: 2px solid black;"> <img src="index/screenshot_7.jpg" style="width:60%; border: 2px solid black;">
 
 Повторное долгое нажатие по выделенным категориям или пунктам позволяет начать их перетаскивание. Таким образом можно менять порядок категорий и пунктов, а также перемещать пункты из одной категорию в другую.
 
-![screenshot_8](./index/screenshot_8.jpg) ![screenshot_9](./index/screenshot_9.jpg)
+<img src="index/screenshot_8.jpg" style="width:60%; border: 2px solid black;"> <img src="index/screenshot_9.jpg" style="width:60%; border: 2px solid black;">
