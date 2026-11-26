@@ -6,20 +6,20 @@
 
 Пункты могут существовать только в рамках какой-то категории. Изначально пользователю доступно только создание новых категорий. Во время добавления категории ей можно задать название.
 
-<img src="index/screenshot_1.jpg" style="width:60%; border: 2px solid black;"> <img src="index/screenshot_2.jpg" style="width:60%; border: 2px solid black;">
+<img src="index/screenshot_1.jpg" style="width:40%; border: 2px solid black;"> <img src="index/screenshot_2.jpg" style="width:40%; border: 2px solid black;">
 
 Категории можно выделять долгим нажатием. После выбора категории пользователю предоставляется возможность переименовать или удалить категорию, а также добавить в нее новый пункт.
 
-<img src="index/screenshot_3.jpg" style="width:60%; border: 2px solid black;"> <img src="index/screenshot_4.jpg" style="width:60%; border: 2px solid black;">
+<img src="index/screenshot_3.jpg" style="width:40%; border: 2px solid black;"> <img src="index/screenshot_4.jpg" style="width:40%; border: 2px solid black;">
 
 Во время добавления пунктов им тоже можно задать название.
 
-<img src="index/screenshot_5.jpg" style="width:60%; border: 2px solid black;">
+<img src="index/screenshot_5.jpg" style="width:40%; border: 2px solid black;">
 
 Пункты тоже можно выделять долгим нажатием. Также пункт можно выбрать простым тапом, если он находится внутри выделенной категории. Выбранный пункт можно переименовать или удалить. У пунктов можно менять состояние отметки.
 
-<img src="index/screenshot_6.jpg" style="width:60%; border: 2px solid black;"> <img src="index/screenshot_7.jpg" style="width:60%; border: 2px solid black;">
+<img src="index/screenshot_6.jpg" style="width:40%; border: 2px solid black;"> <img src="index/screenshot_7.jpg" style="width:40%; border: 2px solid black;">
 
 Повторное долгое нажатие по выделенным категориям или пунктам позволяет начать их перетаскивание. Таким образом можно менять порядок категорий и пунктов, а также перемещать пункты из одной категорию в другую.
 
-<img src="index/screenshot_8.jpg" style="width:60%; border: 2px solid black;"> <img src="index/screenshot_9.jpg" style="width:60%; border: 2px solid black;">
+<img src="index/screenshot_8.jpg" style="width:40%; border: 2px solid black;"> <img src="index/screenshot_9.jpg" style="width:40%; border: 2px solid black;">
